@@ -6,6 +6,8 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, send_file
 import google.generativeai as genai
+import requests
+from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -105,6 +107,24 @@ def tom_apos_st(tom, st):
     if raiz not in NOTAS: return tom
     idx = (NOTAS.index(raiz) + st) % 12
     return NOTAS[idx] + m.group(2)
+
+def get_web_content(url):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        
+        # Remove elementos irrelevantes
+        for s in soup(['script', 'style', 'header', 'footer', 'nav', 'aside']):
+            s.decompose()
+            
+        # Tenta focar no conteúdo da cifra se for Cifra Club ou similar
+        main_content = soup.find('pre') or soup.find('div', class_='cifra_conteudo') or soup
+        return main_content.get_text(separator='\n', strip=True)[:15000]
+    except Exception as e:
+        print(f"Erro ao buscar web: {e}")
+        return ""
 
 @app.errorhandler(Exception)
 def handle_exception(e):
@@ -248,6 +268,10 @@ def importar_musica():
 
     genai.configure(api_key=api_key)
     
+    conteudo_web = get_web_content(url)
+    if not conteudo_web:
+        return jsonify({'erro': 'Não foi possível ler o conteúdo do link. Verifique se a URL está correta.'}), 400
+
     # Tenta descobrir um modelo disponível dinamicamente para evitar erro 404
     modelo_final = 'gemini-1.5-flash' # Default
     try:
@@ -267,11 +291,17 @@ def importar_musica():
         print(f"Erro ao listar modelos: {e}")
 
     model = genai.GenerativeModel(modelo_final)
-    prompt = f"""Você é especialista em cifras musicais brasileiras. Conheça muito bem o Cifra Club e Cifras.com.br.
+    prompt = f"""Você é especialista em cifras musicais brasileiras.
+Sua tarefa é extrair os dados da música do CONTEÚDO abaixo para o formato JSON solicitado.
 
-URL solicitada: {url}
+URL: {url}
 
-Com base na URL e seu conhecimento, retorne APENAS um JSON válido (sem markdown) com esta estrutura:
+CONTEÚDO DA PÁGINA:
+---
+{conteudo_web}
+---
+
+Retorne APENAS um JSON válido (sem markdown e sem texto extra) com esta estrutura:
 
 {{
   "titulo": "Nome da música",
