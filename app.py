@@ -505,7 +505,16 @@ def gerar_pdf(rid):
                      download_name=nome_arquivo, mimetype='application/pdf')
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Inicialização automática (importante para Vercel/Serverless)
+try:
+    if DATABASE_URL:
+        init_db()
+        print("✅ Banco de dados inicializado com sucesso.")
+    else:
+        print("⚠️ DATABASE_URL não encontrada. O banco não foi inicializado.")
+except Exception as e:
+    print(f"❌ Erro ao inicializar banco: {e}")
+
 if __name__ == '__main__':
-    init_db()
     print("\n🎸 Repertório Sol Maior rodando em http://localhost:5000\n")
     app.run(debug=True, port=5000)
