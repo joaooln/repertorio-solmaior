@@ -5,7 +5,7 @@ import os, json, re, subprocess, sys, psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, send_file
-from anthropic import Anthropic
+import google.generativeai as genai
 
 app = Flask(__name__)
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -242,7 +242,12 @@ def importar_musica():
     if not url:
         return jsonify({'erro': 'URL inválida'}), 400
 
-    client = Anthropic()
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return jsonify({'erro': 'Chave GEMINI_API_KEY não configurada no Vercel'}), 400
+
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-2.0-flash')
     prompt = f"""Você é especialista em cifras musicais brasileiras. Conheça muito bem o Cifra Club e Cifras.com.br.
 
 URL solicitada: {url}
@@ -275,12 +280,8 @@ Na tabela: 4 colunas, cada célula = 2 tempos, % = repetir acorde anterior.
 Retorne SOMENTE o JSON, sem nenhum texto extra."""
 
     try:
-        msg = client.messages.create(
-            model="claude-opus-4-5",
-            max_tokens=4000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        text = msg.content[0].text.strip()
+        response = model.generate_content(prompt)
+        text = response.text.strip()
         text = re.sub(r'^```(?:json)?\n?', '', text)
         text = re.sub(r'\n?```$', '', text)
         dados = json.loads(text)

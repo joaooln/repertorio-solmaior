@@ -1,5 +1,5 @@
 flask
-anthropic
+google-generativeai
 reportlab
 requests
 beautifulsoup4
