@@ -247,7 +247,26 @@ def importar_musica():
         return jsonify({'erro': 'Chave GEMINI_API_KEY não configurada no Vercel'}), 400
 
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    
+    # Tenta descobrir um modelo disponível dinamicamente para evitar erro 404
+    modelo_final = 'gemini-1.5-flash' # Default
+    try:
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        print(f"Modelos Gemini disponíveis: {available_models}")
+        
+        # Preferência: 1.5 Flash -> 1.5 Pro -> 1.0 Pro
+        target_models = ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-1.0-pro', 'models/gemini-pro']
+        for target in target_models:
+            if target in available_models:
+                modelo_final = target
+                break
+        else:
+            if available_models:
+                modelo_final = available_models[0]
+    except Exception as e:
+        print(f"Erro ao listar modelos: {e}")
+
+    model = genai.GenerativeModel(modelo_final)
     prompt = f"""Você é especialista em cifras musicais brasileiras. Conheça muito bem o Cifra Club e Cifras.com.br.
 
 URL solicitada: {url}
