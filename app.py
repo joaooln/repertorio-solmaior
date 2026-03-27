@@ -12,7 +12,8 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # ─── Banco de dados ────────────────────────────────────────────────────────────
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    # Supabase/PostgreSQL na nuvem geralmente exige SSL
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, sslmode='require')
     return conn
 
 def init_db():
@@ -104,6 +105,11 @@ def tom_apos_st(tom, st):
     if raiz not in NOTAS: return tom
     idx = (NOTAS.index(raiz) + st) % 12
     return NOTAS[idx] + m.group(2)
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    # Retorna o erro em JSON para facilitar o debug no Vercel
+    return jsonify({"erro": str(e), "tipo": type(e).__name__}), 500
 
 # ─── Rotas: Músicas ────────────────────────────────────────────────────────────
 @app.route('/')
