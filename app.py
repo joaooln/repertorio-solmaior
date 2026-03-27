@@ -247,7 +247,7 @@ def importar_musica():
         return jsonify({'erro': 'Chave GEMINI_API_KEY não configurada no Vercel'}), 400
 
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash')
     prompt = f"""Você é especialista em cifras musicais brasileiras. Conheça muito bem o Cifra Club e Cifras.com.br.
 
 URL solicitada: {url}
