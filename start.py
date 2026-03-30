@@ -5,7 +5,7 @@ Execute com: python start.py
 """
 import subprocess, sys, os, webbrowser, time
 
-DEPS = ["flask", "anthropic", "requests", "beautifulsoup4", "lxml", "reportlab"]
+DEPS = ["flask", "google-generativeai", "requests", "beautifulsoup4", "lxml", "reportlab", "psycopg2-binary"]
 
 def install():
     print("📦 Instalando dependências...")
@@ -14,7 +14,7 @@ def install():
 
 def check_deps():
     try:
-        import flask, anthropic, reportlab
+        import flask, google.generativeai, reportlab
         return True
     except ImportError:
         return False
@@ -24,18 +24,18 @@ if __name__ == "__main__":
         install()
 
     # Verificar chave da API
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not os.environ.get("GEMINI_API_KEY"):
         print("━" * 50)
-        print("⚠️  ATENÇÃO: Chave da API Anthropic não encontrada!")
+        print("⚠️  ATENÇÃO: Chave da API Gemini não encontrada!")
         print("━" * 50)
         print("Para importar cifras via link, você precisa de uma")
-        print("chave da API Anthropic.")
+        print("chave da API Gemini (Google AI Studio).")
         print()
         key = input("Cole sua chave aqui (ou ENTER para pular): ").strip()
         if key:
-            os.environ["ANTHROPIC_API_KEY"] = key
+            os.environ["GEMINI_API_KEY"] = key
             print("✅ Chave configurada para esta sessão.\n")
-            print("💡 Dica: Defina a variável ANTHROPIC_API_KEY no seu sistema")
+            print("💡 Dica: Defina a variável GEMINI_API_KEY no seu sistema")
             print("   para não precisar digitar toda vez.\n")
         else:
             print("⚠️  Importação via link não funcionará sem a chave.\n")

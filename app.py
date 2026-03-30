@@ -110,18 +110,33 @@ def tom_apos_st(tom, st):
 
 def get_web_content(url):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        resp = requests.get(url, headers=headers, timeout=10)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+        }
+        resp = requests.get(url, headers=headers, timeout=15)
         resp.raise_for_status()
+        resp.encoding = resp.apparent_encoding or 'utf-8'
         soup = BeautifulSoup(resp.text, 'html.parser')
-        
+
         # Remove elementos irrelevantes
-        for s in soup(['script', 'style', 'header', 'footer', 'nav', 'aside']):
+        for s in soup(['script', 'style', 'header', 'footer', 'nav', 'aside', 'iframe', 'noscript']):
             s.decompose()
-            
-        # Tenta focar no conteúdo da cifra se for Cifra Club ou similar
-        main_content = soup.find('pre') or soup.find('div', class_='cifra_conteudo') or soup
-        return main_content.get_text(separator='\n', strip=True)[:15000]
+
+        # Seletores em ordem de prioridade — do mais específico ao mais genérico
+        candidates = [
+            soup.find('div', class_='cifra_cnt'),            # Cifra Club (principal)
+            soup.find('div', id='cifra_cnt'),
+            soup.find('article', class_='cifra'),
+            soup.find('pre'),                                 # Muitos sites colocam a cifra em <pre>
+            soup.find('div', class_=re.compile(r'cifra|chord|lyric', re.I)),
+            soup.find('main'),
+            soup.find('article'),
+        ]
+        main_content = next((c for c in candidates if c), soup.find('body') or soup)
+
+        text = main_content.get_text(separator='\n', strip=True)
+        return text[:20000]
     except Exception as e:
         print(f"Erro ao buscar web: {e}")
         return ""
@@ -255,7 +270,9 @@ def transpor_musica(mid):
         conn.commit()
     return jsonify({'ok': True, 'novo_tom': novo_tom})
 
-# ─── Importar via Link (Claude API) ───────────────────────────────────────────
+# ─── Importar via Link (Gemini API) ───────────────────────────────────────────
+GEMINI_MODEL = 'gemini-2.0-flash'
+
 @app.route('/api/musicas/importar', methods=['POST'])
 def importar_musica():
     url = request.json.get('url', '').strip()
@@ -264,35 +281,19 @@ def importar_musica():
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return jsonify({'erro': 'Chave GEMINI_API_KEY não configurada no Vercel'}), 400
+        return jsonify({'erro': 'Chave GEMINI_API_KEY não configurada'}), 400
 
     genai.configure(api_key=api_key)
-    
+
     conteudo_web = get_web_content(url)
     if not conteudo_web:
-        return jsonify({'erro': 'Não foi possível ler o conteúdo do link. Verifique se a URL está correta.'}), 400
+        return jsonify({'erro': 'Não foi possível ler o conteúdo do link. Verifique se a URL está correta e acessível.'}), 400
 
-    # Tenta descobrir um modelo disponível dinamicamente para evitar erro 404
-    modelo_final = 'gemini-1.5-flash' # Default
-    try:
-        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        print(f"Modelos Gemini disponíveis: {available_models}")
-        
-        # Preferência: 1.5 Flash -> 1.5 Pro -> 1.0 Pro
-        target_models = ['models/gemini-1.5-flash', 'models/gemini-1.5-pro', 'models/gemini-1.0-pro', 'models/gemini-pro']
-        for target in target_models:
-            if target in available_models:
-                modelo_final = target
-                break
-        else:
-            if available_models:
-                modelo_final = available_models[0]
-    except Exception as e:
-        print(f"Erro ao listar modelos: {e}")
+    print(f"Conteúdo extraído ({len(conteudo_web)} chars): {conteudo_web[:300]}")
 
-    model = genai.GenerativeModel(modelo_final)
-    prompt = f"""Você é especialista em cifras musicais brasileiras.
-Sua tarefa é extrair os dados da música do CONTEÚDO abaixo para o formato JSON solicitado.
+    model = genai.GenerativeModel(GEMINI_MODEL)
+    prompt = f"""Você é especialista em cifras musicais brasileiras para cavaquinho.
+Extraia os dados da música do CONTEÚDO abaixo e retorne SOMENTE um JSON válido, sem markdown, sem texto extra.
 
 URL: {url}
 
@@ -301,21 +302,21 @@ CONTEÚDO DA PÁGINA:
 {conteudo_web}
 ---
 
-Retorne APENAS um JSON válido (sem markdown e sem texto extra) com esta estrutura:
+ESTRUTURA DO JSON:
 
 {{
   "titulo": "Nome da música",
   "artista": "Nome do artista",
-  "tom": "Tom original ex: Am",
+  "tom": "Tom original (ex: Am, G, C#m)",
   "cifra_tradicional": [
     {{"secao": "Intro", "acordes": "Am G C D", "letra": ""}},
-    {{"secao": "Verso 1", "acordes": "Am", "letra": "Primeira linha da letra"}},
-    {{"secao": "", "acordes": "G C", "letra": "Segunda linha"}},
-    {{"secao": "Refrão", "acordes": "F G Am E", "letra": "Letra do refrão"}}
+    {{"secao": "Verso 1", "acordes": "Am    G", "letra": "Linha de letra aqui"}},
+    {{"secao": "", "acordes": "C     D", "letra": "Próxima linha de letra"}},
+    {{"secao": "Refrão", "acordes": "F  G  Am  E", "letra": "Letra do refrão"}}
   ],
   "tabela": [
     {{
-      "nome_secao": "Verso (primeiros versos...)",
+      "nome_secao": "Intro / Verso",
       "grid": [
         ["Am", "%", "G", "C"],
         ["F", "G", "%", "Am"]
@@ -324,16 +325,40 @@ Retorne APENAS um JSON válido (sem markdown e sem texto extra) com esta estrutu
   ]
 }}
 
-Inclua TODAS as seções: Intro, Verso(s), Pré-Refrão, Refrão, Ponte, Solo, Final.
-Na tabela: 4 colunas, cada célula = 2 tempos, % = repetir acorde anterior.
-Retorne SOMENTE o JSON, sem nenhum texto extra."""
+REGRAS IMPORTANTES:
+- cifra_tradicional: cada objeto é UMA linha. "acordes" fica acima da "letra" correspondente.
+- Se uma linha tem só acordes sem letra (ex: intro instrumental), "letra" fica "".
+- Se uma linha tem só letra sem acordes, "acordes" fica "".
+- Inclua todas as seções presentes: Intro, Verso, Pré-Refrão, Refrão, Ponte, Solo, Outro, Final.
+- "secao" só é preenchido na PRIMEIRA linha de cada seção nova; demais linhas da mesma seção ficam "".
+- tabela: 4 colunas, cada célula é 1 compasso (ou meio, dependendo do andamento). "%" = repetir acorde anterior.
+- Na tabela inclua todas as seções distintas com seus respectivos grids.
+- tom: use notação padrão (C, Dm, G#m, Bb, etc.)."""
 
     try:
         response = model.generate_content(prompt)
         text = response.text.strip()
-        text = re.sub(r'^```(?:json)?\n?', '', text)
-        text = re.sub(r'\n?```$', '', text)
-        dados = json.loads(text)
+
+        # Remove blocos markdown se o modelo incluir mesmo sendo pedido para não
+        text = re.sub(r'^```(?:json)?\s*', '', text)
+        text = re.sub(r'\s*```$', '', text)
+        text = text.strip()
+
+        try:
+            dados = json.loads(text)
+        except json.JSONDecodeError as e:
+            print(f"JSON inválido recebido do Gemini: {text[:500]}")
+            return jsonify({'erro': f'A IA retornou um formato inválido. Tente novamente ou adicione a cifra manualmente.'}), 500
+
+        # Valida campos obrigatórios
+        titulo = dados.get('titulo', '').strip() or 'Sem título'
+        artista = dados.get('artista', '').strip() or 'Desconhecido'
+        tom = dados.get('tom', 'C').strip() or 'C'
+        cifra = dados.get('cifra_tradicional', [])
+        tabela = dados.get('tabela', [])
+
+        if not cifra and not tabela:
+            return jsonify({'erro': 'A IA não conseguiu extrair a cifra desta página. Tente outra URL ou adicione manualmente.'}), 400
 
         mid = gen_id()
         n = now_iso()
@@ -342,15 +367,15 @@ Retorne SOMENTE o JSON, sem nenhum texto extra."""
                 cur.execute(
                     """INSERT INTO musicas (id, titulo, artista, tom, tom_original, cifra_json, tabela_json, url_origem, criado_em, atualizado_em)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (mid, dados['titulo'], dados['artista'],
-                     dados.get('tom','C'), dados.get('tom','C'),
-                     json.dumps(dados.get('cifra_tradicional',[]), ensure_ascii=False),
-                     json.dumps(dados.get('tabela',[]), ensure_ascii=False),
+                    (mid, titulo, artista, tom, tom,
+                     json.dumps(cifra, ensure_ascii=False),
+                     json.dumps(tabela, ensure_ascii=False),
                      url, n, n)
                 )
             conn.commit()
-        return jsonify({'ok': True, 'id': mid, 'titulo': dados['titulo']})
+        return jsonify({'ok': True, 'id': mid, 'titulo': titulo})
     except Exception as e:
+        print(f"Erro na importação: {e}")
         return jsonify({'erro': str(e)}), 500
 
 # ─── Rotas: Repertórios ────────────────────────────────────────────────────────
