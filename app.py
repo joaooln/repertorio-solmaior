@@ -271,7 +271,25 @@ def transpor_musica(mid):
     return jsonify({'ok': True, 'novo_tom': novo_tom})
 
 # ─── Importar via Link (Gemini API) ───────────────────────────────────────────
-GEMINI_MODEL = 'gemini-2.0-flash'
+GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b']
+
+def call_gemini(prompt):
+    """Tenta cada modelo em ordem até um funcionar (fallback em caso de cota esgotada)."""
+    last_err = None
+    for model_name in GEMINI_MODELS:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            print(f"Modelo usado: {model_name}")
+            return response.text
+        except Exception as e:
+            err_str = str(e)
+            if '429' in err_str or 'quota' in err_str.lower() or 'exhausted' in err_str.lower():
+                print(f"Cota esgotada para {model_name}, tentando próximo...")
+                last_err = e
+                continue
+            raise  # outros erros sobem imediatamente
+    raise last_err  # todos os modelos falharam por cota
 
 @app.route('/api/musicas/importar', methods=['POST'])
 def importar_musica():
@@ -291,7 +309,6 @@ def importar_musica():
 
     print(f"Conteúdo extraído ({len(conteudo_web)} chars): {conteudo_web[:300]}")
 
-    model = genai.GenerativeModel(GEMINI_MODEL)
     prompt = f"""Você é especialista em cifras musicais brasileiras para cavaquinho.
 Extraia os dados da música do CONTEÚDO abaixo e retorne SOMENTE um JSON válido, sem markdown, sem texto extra.
 
@@ -336,8 +353,7 @@ REGRAS IMPORTANTES:
 - tom: use notação padrão (C, Dm, G#m, Bb, etc.)."""
 
     try:
-        response = model.generate_content(prompt)
-        text = response.text.strip()
+        text = call_gemini(prompt).strip()
 
         # Remove blocos markdown se o modelo incluir mesmo sendo pedido para não
         text = re.sub(r'^```(?:json)?\s*', '', text)
@@ -346,9 +362,9 @@ REGRAS IMPORTANTES:
 
         try:
             dados = json.loads(text)
-        except json.JSONDecodeError as e:
+        except json.JSONDecodeError:
             print(f"JSON inválido recebido do Gemini: {text[:500]}")
-            return jsonify({'erro': f'A IA retornou um formato inválido. Tente novamente ou adicione a cifra manualmente.'}), 500
+            return jsonify({'erro': 'A IA retornou um formato inválido. Tente novamente ou adicione a cifra manualmente.'}), 500
 
         # Valida campos obrigatórios
         titulo = dados.get('titulo', '').strip() or 'Sem título'
