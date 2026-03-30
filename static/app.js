@@ -46,13 +46,16 @@ function modal(html, size='modal-md') {
      </div>`);
 }
 
+let pendingConfirmCallback = null;
+
 function confirm_del(msg, cb) {
+  pendingConfirmCallback = cb;
   modal(`
     <div class="modal-header"><h3 class="modal-title">Confirmar</h3></div>
     <p style="color:var(--text-dim);font-size:15px;margin-bottom:32px">${msg}</p>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
-      <button class="btn btn-danger" onclick="closeModal();(${cb.toString()})()">Excluir Definitivamente</button>
+      <button class="btn btn-danger" onclick="closeModal(); if(pendingConfirmCallback) pendingConfirmCallback();">Excluir Definitivamente</button>
     </div>`, 'modal-sm');
 }
 

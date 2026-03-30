@@ -465,10 +465,10 @@ def gerar_pdf(rid):
     MUTED = colors.HexColor('#757067')
     GREY_LINE = colors.HexColor('#e8e5df')
 
-    titulo_st = ParagraphStyle('T', parent=styles['Normal'], fontSize=20, fontName='Helvetica-Bold', textColor=DARK, spaceAfter=2)
-    artista_st = ParagraphStyle('A', parent=styles['Normal'], fontSize=11, fontName='Helvetica', textColor=MUTED, spaceAfter=14)
-    secao_st   = ParagraphStyle('S', parent=styles['Normal'], fontSize=9, fontName='Helvetica-Bold', textColor=GOLD, spaceBefore=10, spaceAfter=4, textTransform='uppercase')
-    acorde_st  = ParagraphStyle('AC', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=DARK, spaceBefore=4)
+    titulo_st = ParagraphStyle('T', parent=styles['Normal'], fontSize=20, fontName='Helvetica-Bold', textColor=DARK, spaceAfter=8, leading=26)
+    artista_st = ParagraphStyle('A', parent=styles['Normal'], fontSize=11, fontName='Helvetica', textColor=MUTED, spaceAfter=16, leading=14)
+    secao_st   = ParagraphStyle('S', parent=styles['Normal'], fontSize=9, fontName='Helvetica-Bold', textColor=GOLD, spaceBefore=10, spaceAfter=4, textTransform='uppercase', leading=12)
+    acorde_st  = ParagraphStyle('AC', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=DARK, spaceBefore=4, leading=12)
     letra_st   = ParagraphStyle('L', parent=styles['Normal'], fontSize=10, fontName='Helvetica', textColor=DARK, spaceAfter=4, leading=14)
     
     # Tabela 
