@@ -271,25 +271,51 @@ def transpor_musica(mid):
     return jsonify({'ok': True, 'novo_tom': novo_tom})
 
 # ─── Importar via Link (Gemini API) ───────────────────────────────────────────
-GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b']
+# Preferência de modelos — o primeiro disponível e com cota será usado
+GEMINI_PREFERRED = [
+    'gemini-2.0-flash', 'gemini-2.0-flash-lite',
+    'gemini-1.5-flash', 'gemini-1.5-flash-8b',
+    'gemini-1.5-pro',   'gemini-1.0-pro',
+]
+
+_gemini_models_cache = None  # descobertos uma vez por processo
+
+def get_gemini_models():
+    global _gemini_models_cache
+    if _gemini_models_cache is None:
+        try:
+            available = {
+                m.name.replace('models/', '')
+                for m in genai.list_models()
+                if 'generateContent' in m.supported_generation_methods
+            }
+            # mantém a ordem de preferência, filtrando pelos disponíveis
+            _gemini_models_cache = [m for m in GEMINI_PREFERRED if m in available]
+            if not _gemini_models_cache:
+                _gemini_models_cache = list(available)  # usa qualquer um
+            print(f"Modelos Gemini disponíveis (em ordem): {_gemini_models_cache}")
+        except Exception as e:
+            print(f"Erro ao listar modelos Gemini: {e}")
+            _gemini_models_cache = GEMINI_PREFERRED  # tenta a lista padrão
+    return _gemini_models_cache
 
 def call_gemini(prompt):
-    """Tenta cada modelo em ordem até um funcionar (fallback em caso de cota esgotada)."""
+    """Tenta cada modelo disponível em ordem de preferência, com fallback em 429/404."""
+    models = get_gemini_models()
     last_err = None
-    for model_name in GEMINI_MODELS:
+    for model_name in models:
         try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
+            response = genai.GenerativeModel(model_name).generate_content(prompt)
             print(f"Modelo usado: {model_name}")
             return response.text
         except Exception as e:
             err_str = str(e)
-            if '429' in err_str or 'quota' in err_str.lower() or 'exhausted' in err_str.lower():
-                print(f"Cota esgotada para {model_name}, tentando próximo...")
+            if any(x in err_str for x in ('429', '404', 'quota', 'exhausted', 'not found')):
+                print(f"Modelo {model_name} indisponível ({err_str[:80]}), tentando próximo...")
                 last_err = e
                 continue
-            raise  # outros erros sobem imediatamente
-    raise last_err  # todos os modelos falharam por cota
+            raise
+    raise last_err
 
 @app.route('/api/musicas/importar', methods=['POST'])
 def importar_musica():
