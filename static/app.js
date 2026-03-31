@@ -627,10 +627,48 @@ async function delRep(id, nome, fromModal=false) {
 // ══════════════════════════════════════════════════════════════════════
 // GERAR PDF
 // ══════════════════════════════════════════════════════════════════════
-async function gerarPDF(id, nome) {
-  loading(`Compilando PDF: ${nome}...`);
+function gerarPDF(id, nome) {
+  modal(`
+    <div class="modal-header">
+      <h3 class="modal-title">📄 Gerar PDF — ${nome}</h3>
+      <button class="close-btn" onclick="closeModal()">×</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;padding:8px 0 16px">
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadPDF('${id}','${nome.replace(/'/g,"\\'")}','completo')">
+        <span style="font-size:18px">📚</span>
+        <div style="text-align:left">
+          <div style="font-weight:600;margin-bottom:2px">PDF Completo</div>
+          <div style="font-size:12px;color:var(--text-dim)">Cifra com letra + mapa de acordes para cada música</div>
+        </div>
+      </button>
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadPDF('${id}','${nome.replace(/'/g,"\\'")}','cifra')">
+        <span style="font-size:18px">🎵</span>
+        <div style="text-align:left">
+          <div style="font-weight:600;margin-bottom:2px">Só Cifras e Letras</div>
+          <div style="font-size:12px;color:var(--text-dim)">Acordes acima da letra, sem mapa de grade</div>
+        </div>
+      </button>
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadPDF('${id}','${nome.replace(/'/g,"\\'")}','tabela')">
+        <span style="font-size:18px">🗂️</span>
+        <div style="text-align:left">
+          <div style="font-weight:600;margin-bottom:2px">Só Mapa de Acordes</div>
+          <div style="font-size:12px;color:var(--text-dim)">Grade de compassos por seção, sem letra</div>
+        </div>
+      </button>
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadPDF('${id}','${nome.replace(/'/g,"\\'")}','setlist')">
+        <span style="font-size:18px">🎤</span>
+        <div style="text-align:left">
+          <div style="font-weight:600;margin-bottom:2px">Lista de Palco</div>
+          <div style="font-size:12px;color:var(--text-dim)">Título, artista e tom em letra grande — para ver a sequência no show</div>
+        </div>
+      </button>
+    </div>`, 'modal-sm');
+}
+
+async function _downloadPDF(id, nome, modo) {
+  loading(`Gerando PDF...`);
   try {
-    const resp = await fetch(`/api/repertorios/${id}/pdf`);
+    const resp = await fetch(`/api/repertorios/${id}/pdf?modo=${modo}`);
     if(!resp.ok) {
       const err = await resp.json();
       throw new Error(err.erro||'Erro desconhecido');
@@ -639,7 +677,7 @@ async function gerarPDF(id, nome) {
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href     = url;
-    a.download = nome.replace(/[^a-z0-9]/gi,'_') + '.pdf';
+    a.download = nome.replace(/[^a-z0-9]/gi,'_') + `_${modo}.pdf`;
     a.click();
     URL.revokeObjectURL(url);
     toast('✅ PDF baixado com sucesso!');

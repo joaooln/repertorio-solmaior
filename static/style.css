@@ -527,6 +527,22 @@ textarea { resize: vertical; min-height: 120px; font-family: var(--font-m); font
 .loading-msg { font-size: 16px; color: var(--gold); font-family: var(--font-m); letter-spacing: 0.05em; font-weight: 500; }
 .spin-sm { width: 16px; height: 16px; border-width: 2px; }
 
+/* PDF option buttons */
+.pdf-opt-btn {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  text-align: left;
+  width: 100%;
+  transition: background 0.15s, border-color 0.15s;
+}
+.pdf-opt-btn:hover {
+  background: rgba(212,168,83,0.1);
+  border-color: var(--gold);
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
