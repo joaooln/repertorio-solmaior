@@ -79,7 +79,7 @@ def transpoe_acorde(acorde, st):
 
 def transpoe_linha(linha, st):
     return re.sub(
-        r'\b([A-G][b#]?(?:m|maj|min|dim|aug|sus|add|M|7M|\+)?[0-9]?(?:/[A-G][b#]?)?)\b',
+        r'\b([A-G][b#]?(?:m|maj|min|dim|aug|sus|add|M|7M|\+)?[0-9]?(?:/[A-G][b#]?)?)(?![A-Za-z0-9#])',
         lambda m: transpoe_acorde(m.group(0), st),
         linha
     )
