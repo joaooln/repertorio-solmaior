@@ -218,7 +218,7 @@ async function doImportLote() {
   textarea.disabled = true;
   progress.style.display = 'block';
   progress.innerHTML = urls.map((url, i) => `
-    <div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);font-size:13px;">
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--card-border);font-size:13px;">
       <span id="lote-icon-${i}" style="width:18px;text-align:center;flex-shrink:0;">⏳</span>
       <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)" title="${url}">${url}</span>
       <span id="lote-status-${i}" style="color:var(--text-dim);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;" title="">Aguardando...</span>
