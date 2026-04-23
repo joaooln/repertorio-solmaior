@@ -89,6 +89,7 @@ async function renderMusicas() {
       </div>
       <div class="page-actions">
         <button class="btn btn-ghost" onclick="openImport()">🔗 Importar Link</button>
+        <button class="btn btn-ghost" onclick="openImportLote()">📋 Importar em Lote</button>
         <button class="btn btn-primary" onclick="openAddManual()">+ Adicionar</button>
       </div>
     </div>
@@ -177,6 +178,82 @@ async function doImport() {
     btn.disabled = false;
     btn.innerHTML = 'Tentar Novamente';
   }
+}
+
+// ── Importar em lote ───────────────────────────────────────────────────
+function openImportLote() {
+  modal(`
+    <div class="modal-header">
+      <h3 class="modal-title">📋 Importar em Lote</h3>
+      <button class="close-btn" onclick="closeModal()">×</button>
+    </div>
+    <div class="info-box">
+      Cole um link por linha do <strong>Cifra Club</strong> ou <strong>Cifras.com.br</strong>.<br>
+      Cada cifra será importada automaticamente pela IA.
+    </div>
+    <div class="form-group">
+      <label>URLs (uma por linha)</label>
+      <textarea id="lote-urls" rows="6" placeholder="https://www.cifraclub.com.br/artista/musica-1/&#10;https://www.cifraclub.com.br/artista/musica-2/&#10;..." style="width:100%;resize:vertical;"></textarea>
+    </div>
+    <div id="lote-progress" style="display:none;max-height:220px;overflow-y:auto;margin-bottom:10px;border:1px solid var(--card-border);border-radius:8px;padding:4px 8px;"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="btn-lote-cancel" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="btn-lote-imp" onclick="doImportLote()">Importar Todas</button>
+    </div>`, 'modal-md');
+  document.getElementById('lote-urls').focus();
+}
+
+async function doImportLote() {
+  const raw = document.getElementById('lote-urls').value;
+  const urls = raw.split('\n').map(u => u.trim()).filter(u => u);
+  if (!urls.length) { toast('Cole pelo menos uma URL', 'err'); return; }
+
+  const btn = document.getElementById('btn-lote-imp');
+  const cancelBtn = document.getElementById('btn-lote-cancel');
+  const progress = document.getElementById('lote-progress');
+  const textarea = document.getElementById('lote-urls');
+
+  btn.disabled = true;
+  cancelBtn.disabled = true;
+  textarea.disabled = true;
+  progress.style.display = 'block';
+  progress.innerHTML = urls.map((url, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--border);font-size:13px;">
+      <span id="lote-icon-${i}" style="width:18px;text-align:center;flex-shrink:0;">⏳</span>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)" title="${url}">${url}</span>
+      <span id="lote-status-${i}" style="color:var(--text-dim);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;" title="">Aguardando...</span>
+    </div>
+  `).join('');
+
+  let ok = 0, fail = 0;
+  for (let i = 0; i < urls.length; i++) {
+    const icon = document.getElementById(`lote-icon-${i}`);
+    const status = document.getElementById(`lote-status-${i}`);
+    icon.innerHTML = '<span class="spin spin-sm"></span>';
+    status.style.color = 'var(--gold)';
+    status.textContent = 'Importando...';
+    try {
+      const r = await api.post('/api/musicas/importar', {url: urls[i]});
+      if (r.erro) throw new Error(r.erro);
+      icon.textContent = '✅';
+      status.style.color = 'var(--green)';
+      status.title = r.titulo;
+      status.textContent = r.titulo;
+      ok++;
+    } catch(e) {
+      icon.textContent = '❌';
+      status.style.color = 'var(--red)';
+      status.title = e.message;
+      status.textContent = e.message.slice(0, 50);
+      fail++;
+    }
+  }
+
+  btn.textContent = 'Concluído';
+  cancelBtn.disabled = false;
+  cancelBtn.textContent = 'Fechar';
+  await renderMusicas();
+  toast(`${ok} importada${ok!==1?'s':''} com sucesso${fail ? `, ${fail} com erro` : ''}`, ok > 0 ? 'ok' : 'err');
 }
 
 // ── Adicionar manual ───────────────────────────────────────────────────
