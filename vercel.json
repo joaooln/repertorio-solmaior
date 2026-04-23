@@ -11,5 +11,11 @@
       "src": "/(.*)",
       "dest": "app.py"
     }
+  ],
+  "crons": [
+    {
+      "path": "/health",
+      "schedule": "0 12 * * *"
+    }
   ]
 }

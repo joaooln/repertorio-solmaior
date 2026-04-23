@@ -702,4 +702,15 @@ def gerar_pdf(rid):
     nome_arquivo = rep['nome'].replace(' ', '_') + sufixo + '.pdf'
     return send_file(output_path, as_attachment=True, download_name=nome_arquivo, mimetype='application/pdf')
 
+# ─── Health check & keep-alive ────────────────────────────────────────────────
+@app.route('/health')
+def health():
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        return jsonify({"status": "ok"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "detail": str(e)}), 500
+
 # ──────────────────────────────────────────────────────────────────────────────
