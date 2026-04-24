@@ -326,8 +326,19 @@ def call_gemini(prompt):
 @app.route('/api/musicas/importar', methods=['POST'])
 def importar_musica():
     url = request.json.get('url', '').strip()
+    substituir = request.json.get('substituir', False)
     if not url:
         return jsonify({'erro': 'URL inválida'}), 400
+
+    # Verifica duplicata por URL antes de chamar a IA
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, titulo, artista FROM musicas WHERE url_origem = %s", (url,))
+            existente = cur.fetchone()
+
+    if existente and not substituir:
+        return jsonify({'duplicada': True, 'id': existente['id'],
+                        'titulo': existente['titulo'], 'artista': existente['artista']})
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -408,18 +419,28 @@ REGRAS IMPORTANTES:
         if not cifra and not tabela:
             return jsonify({'erro': 'A IA não conseguiu extrair a cifra desta página. Tente outra URL ou adicione manualmente.'}), 400
 
-        mid = gen_id()
         n = now_iso()
         with get_db() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """INSERT INTO musicas (id, titulo, artista, tom, tom_original, cifra_json, tabela_json, url_origem, criado_em, atualizado_em)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (mid, titulo, artista, tom, tom,
-                     json.dumps(cifra, ensure_ascii=False),
-                     json.dumps(tabela, ensure_ascii=False),
-                     url, n, n)
-                )
+                if existente and substituir:
+                    mid = existente['id']
+                    cur.execute("""
+                        UPDATE musicas SET titulo=%s, artista=%s, tom=%s, tom_original=%s,
+                            cifra_json=%s, tabela_json=%s, url_origem=%s, atualizado_em=%s
+                        WHERE id=%s""",
+                        (titulo, artista, tom, tom,
+                         json.dumps(cifra, ensure_ascii=False),
+                         json.dumps(tabela, ensure_ascii=False),
+                         url, n, mid))
+                else:
+                    mid = gen_id()
+                    cur.execute(
+                        """INSERT INTO musicas (id, titulo, artista, tom, tom_original, cifra_json, tabela_json, url_origem, criado_em, atualizado_em)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (mid, titulo, artista, tom, tom,
+                         json.dumps(cifra, ensure_ascii=False),
+                         json.dumps(tabela, ensure_ascii=False),
+                         url, n, n))
             conn.commit()
         return jsonify({'ok': True, 'id': mid, 'titulo': titulo})
     except Exception as e:

@@ -157,7 +157,7 @@ function openImport() {
   document.getElementById('imp-url').focus();
 }
 
-async function doImport() {
+async function doImport(substituir = false) {
   const url = document.getElementById('imp-url').value.trim();
   if(!url) { toast('Cole uma URL', 'err'); return; }
   const btn = document.getElementById('btn-imp');
@@ -166,8 +166,22 @@ async function doImport() {
   btn.innerHTML = '<span class="spin spin-sm"></span> Importando...';
   msg.innerHTML = '<span style="color:var(--gold)">Consultando Inteligência Artificial... Isso pode levar alguns segundos.</span>';
   try {
-    const r = await api.post('/api/musicas/importar', {url});
+    const r = await api.post('/api/musicas/importar', {url, substituir});
     if(r.erro) throw new Error(r.erro);
+    if(r.duplicada) {
+      btn.disabled = false;
+      btn.innerHTML = 'Importar';
+      msg.innerHTML = `
+        <div style="background:rgba(212,168,83,.1);border:1px solid rgba(212,168,83,.3);border-radius:8px;padding:10px 14px;font-size:13px;">
+          <strong style="color:var(--gold)">⚠️ Música já existe na biblioteca:</strong><br>
+          <span style="color:var(--text)">"${r.titulo}" — ${r.artista}</span><br>
+          <div style="margin-top:8px;display:flex;gap:8px;">
+            <button class="btn btn-ghost btn-sm" onclick="closeModal()">Cancelar</button>
+            <button class="btn btn-primary btn-sm" onclick="doImport(true)">Substituir</button>
+          </div>
+        </div>`;
+      return;
+    }
     closeModal();
     toast(`✅ "${r.titulo}" importada com sucesso!`);
     mFilter = '';
@@ -195,6 +209,10 @@ function openImportLote() {
       <label>URLs (uma por linha)</label>
       <textarea id="lote-urls" rows="6" placeholder="https://www.cifraclub.com.br/artista/musica-1/&#10;https://www.cifraclub.com.br/artista/musica-2/&#10;..." style="width:100%;resize:vertical;"></textarea>
     </div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;cursor:pointer;font-size:13px;color:var(--text-dim);text-transform:none;letter-spacing:0;">
+      <input type="checkbox" id="lote-substituir" style="width:16px;height:16px;cursor:pointer;">
+      Substituir músicas já importadas
+    </label>
     <div id="lote-progress" style="display:none;max-height:220px;overflow-y:auto;margin-bottom:10px;border:1px solid var(--card-border);border-radius:8px;padding:4px 8px;"></div>
     <div class="modal-footer">
       <button class="btn btn-ghost" id="btn-lote-cancel" onclick="closeModal()">Cancelar</button>
@@ -208,6 +226,7 @@ async function doImportLote() {
   const urls = raw.split('\n').map(u => u.trim()).filter(u => u);
   if (!urls.length) { toast('Cole pelo menos uma URL', 'err'); return; }
 
+  const substituir = document.getElementById('lote-substituir').checked;
   const btn = document.getElementById('btn-lote-imp');
   const cancelBtn = document.getElementById('btn-lote-cancel');
   const progress = document.getElementById('lote-progress');
@@ -216,6 +235,7 @@ async function doImportLote() {
   btn.disabled = true;
   cancelBtn.disabled = true;
   textarea.disabled = true;
+  document.getElementById('lote-substituir').disabled = true;
   progress.style.display = 'block';
   progress.innerHTML = urls.map((url, i) => `
     <div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--card-border);font-size:13px;">
@@ -225,7 +245,7 @@ async function doImportLote() {
     </div>
   `).join('');
 
-  let ok = 0, fail = 0;
+  let ok = 0, skip = 0, fail = 0;
   for (let i = 0; i < urls.length; i++) {
     const icon = document.getElementById(`lote-icon-${i}`);
     const status = document.getElementById(`lote-status-${i}`);
@@ -233,13 +253,21 @@ async function doImportLote() {
     status.style.color = 'var(--gold)';
     status.textContent = 'Importando...';
     try {
-      const r = await api.post('/api/musicas/importar', {url: urls[i]});
+      const r = await api.post('/api/musicas/importar', {url: urls[i], substituir});
       if (r.erro) throw new Error(r.erro);
-      icon.textContent = '✅';
-      status.style.color = 'var(--green)';
-      status.title = r.titulo;
-      status.textContent = r.titulo;
-      ok++;
+      if (r.duplicada) {
+        icon.textContent = '⏭️';
+        status.style.color = 'var(--text-dim)';
+        status.title = `Já existe: ${r.titulo}`;
+        status.textContent = `Já existe: ${r.titulo}`;
+        skip++;
+      } else {
+        icon.textContent = '✅';
+        status.style.color = 'var(--green)';
+        status.title = r.titulo;
+        status.textContent = r.titulo;
+        ok++;
+      }
     } catch(e) {
       icon.textContent = '❌';
       status.style.color = 'var(--red)';
@@ -253,7 +281,11 @@ async function doImportLote() {
   cancelBtn.disabled = false;
   cancelBtn.textContent = 'Fechar';
   await renderMusicas();
-  toast(`${ok} importada${ok!==1?'s':''} com sucesso${fail ? `, ${fail} com erro` : ''}`, ok > 0 ? 'ok' : 'err');
+  const partes = [];
+  if (ok) partes.push(`${ok} importada${ok!==1?'s':''}`);
+  if (skip) partes.push(`${skip} já existia${skip!==1?'m':''}`);
+  if (fail) partes.push(`${fail} com erro`);
+  toast(partes.join(', '), ok > 0 ? 'ok' : (skip > 0 ? 'ok' : 'err'));
 }
 
 // ── Adicionar manual ───────────────────────────────────────────────────
