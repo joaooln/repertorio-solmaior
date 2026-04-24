@@ -4,10 +4,21 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Repertório Sol Maior</title>
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#d4a853">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,700&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+
+<!-- Banner offline -->
+<div id="offline-banner" style="display:none">
+  <span>📡 Você está offline — exibindo dados do cache local</span>
+  <span id="pending-badge" style="display:none"></span>
+</div>
+
 <div class="bento-container">
   <!-- Navbar Top -->
   <header class="bento-header bento-card">
@@ -19,7 +30,7 @@
       <button class="nav-item active" onclick="page('musicas')" id="nav-musicas">🎵 Músicas</button>
       <button class="nav-item" onclick="page('repertorios')" id="nav-repertorios">📋 Repertórios</button>
       <button class="nav-item" onclick="page('stats')" id="nav-stats">📊 Estatísticas</button>
-      <div class="status-indicator" title="Servidor Ativo"></div>
+      <div class="status-indicator" id="conn-indicator" title="Verificando conexão..."></div>
     </nav>
   </header>
 
@@ -30,7 +41,14 @@
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
-<!-- JavaScript Logic -->
+<script src="/static/idb.js"></script>
 <script src="/static/app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js')
+      .then(r => console.log('SW registrado:', r.scope))
+      .catch(e => console.warn('SW erro:', e));
+  }
+</script>
 </body>
 </html>

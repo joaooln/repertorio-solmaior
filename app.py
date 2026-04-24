@@ -160,6 +160,14 @@ def handle_exception(e):
 def index():
     return render_template('index.html')
 
+@app.route('/sw.js')
+def service_worker():
+    from flask import send_from_directory
+    resp = send_from_directory('static', 'sw.js', mimetype='application/javascript')
+    resp.headers['Service-Worker-Allowed'] = '/'
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
+
 @app.route('/api/musicas', methods=['GET'])
 def listar_musicas():
     q        = request.args.get('q', '')

@@ -1,11 +1,162 @@
 // ══════════════════════════════════════════════════════════════════════
-// API
+// OFFLINE / SYNC
 // ══════════════════════════════════════════════════════════════════════
+let _isOnline = navigator.onLine;
+
+function updateOnlineUI() {
+  _isOnline = navigator.onLine;
+  const banner    = document.getElementById('offline-banner');
+  const indicator = document.getElementById('conn-indicator');
+  if (banner) banner.style.display = _isOnline ? 'none' : 'flex';
+  if (indicator) {
+    indicator.style.background = _isOnline ? '' : '#e67e22';
+    indicator.title = _isOnline ? 'Online' : 'Offline — dados do cache';
+  }
+  if (_isOnline) syncPendingWrites();
+}
+
+window.addEventListener('online',  updateOnlineUI);
+window.addEventListener('offline', updateOnlineUI);
+
+// Atualiza badge com contagem de escritas pendentes
+async function refreshPendingBadge() {
+  const items = await idbGetAll('pending');
+  const badge = document.getElementById('pending-badge');
+  if (!badge) return;
+  if (items.length > 0) {
+    badge.style.display = 'inline';
+    badge.textContent = `${items.length} alteração${items.length !== 1 ? 'ões' : ''} pendente${items.length !== 1 ? 's' : ''}`;
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+// Executa todas as escritas enfileiradas em ordem
+async function syncPendingWrites() {
+  const items = await idbGetAll('pending');
+  if (!items.length) return;
+
+  toast(`🔄 Sincronizando ${items.length} alteração${items.length!==1?'ões':''}...`, 'warn');
+  let ok = 0, fail = 0;
+
+  for (const item of items) {
+    try {
+      const opts = { method: item.method, headers: {'Content-Type':'application/json'} };
+      if (item.body) opts.body = JSON.stringify(item.body);
+      const r = await fetch(item.url, opts);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      await idbDelete('pending', item.qid);
+      ok++;
+    } catch (e) {
+      console.warn('Sync falhou para', item.url, e);
+      fail++;
+    }
+  }
+
+  await refreshPendingBadge();
+  if (fail === 0) {
+    toast(`✅ ${ok} alteração${ok!==1?'ões':''} sincronizada${ok!==1?'s':''}!`);
+  } else {
+    toast(`⚠️ ${ok} sincronizadas, ${fail} com erro`, 'warn');
+  }
+
+  // Atualiza a página com dados frescos do servidor
+  if (currentPage === 'musicas') renderMusicas();
+  else if (currentPage === 'repertorios') renderRepertorios();
+}
+
+// Enfileira uma escrita para sync posterior
+async function enqueueWrite(method, url, body) {
+  // Coalesce: se já existe um PUT pendente para a mesma URL, substitui
+  if (method === 'PUT') {
+    const all = await idbGetAll('pending');
+    const dup = all.find(i => i.method === 'PUT' && i.url === url);
+    if (dup) {
+      await idbDelete('pending', dup.qid);
+    }
+  }
+  await idbAdd('pending', { method, url, body, ts: Date.now() });
+  await refreshPendingBadge();
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// API — offline-aware
+// ══════════════════════════════════════════════════════════════════════
+const CACHEABLE = ['/api/musicas', '/api/repertorios', '/api/stats'];
+
+function isCacheable(url) {
+  return CACHEABLE.some(p => url === p || url.startsWith(p + '?') || url.startsWith(p + '/'));
+}
+
 const api = {
-  async get(url)    { const r=await fetch(url); return r.json() },
-  async post(url,d) { const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}); return r.json() },
-  async put(url,d)  { const r=await fetch(url,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}); return r.json() },
-  async del(url)    { const r=await fetch(url,{method:'DELETE'}); return r.json() },
+  async get(url) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      if (isCacheable(url)) await idbPut('api_cache', url, { data, ts: Date.now() });
+      return data;
+    } catch (e) {
+      // offline ou erro de rede: tenta cache
+      const cached = await idbGet('api_cache', url);
+      if (cached) return cached.data;
+      // fallback especial para /api/musicas/:id
+      const idMatch = url.match(/^\/api\/musicas\/([^/?]+)$/);
+      if (idMatch) {
+        const list = await idbGet('api_cache', '/api/musicas');
+        if (list) {
+          const found = list.data.find(m => m.id === idMatch[1]);
+          if (found) {
+            found.cifra_tradicional = found.cifra_tradicional || JSON.parse(found.cifra_json || '[]');
+            found.tabela = found.tabela || JSON.parse(found.tabela_json || '[]');
+            return found;
+          }
+        }
+      }
+      throw e;
+    }
+  },
+
+  async post(url, d) {
+    if (!navigator.onLine) {
+      // Imports e operações que requerem IA/servidor não funcionam offline
+      if (url.includes('/importar')) throw new Error('Importação requer conexão com a internet');
+      // Criação de nova música/repertório offline: não suportado (IDs gerados no servidor)
+      if (url === '/api/musicas' || url === '/api/repertorios')
+        throw new Error('Criação de novos itens requer conexão. Conecte-se e tente novamente.');
+      await enqueueWrite('POST', url, d);
+      return { ok: true, offline: true };
+    }
+    const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d) });
+    return r.json();
+  },
+
+  async put(url, d) {
+    if (!navigator.onLine) {
+      // Atualiza o cache local imediatamente
+      const listCache = await idbGet('api_cache', '/api/musicas');
+      if (listCache) {
+        const idMatch = url.match(/\/api\/musicas\/([^/]+)$/);
+        if (idMatch) {
+          listCache.data = listCache.data.map(m => m.id === idMatch[1] ? {...m, ...d} : m);
+          await idbPut('api_cache', '/api/musicas', listCache);
+        }
+      }
+      await enqueueWrite('PUT', url, d);
+      return { ok: true, offline: true };
+    }
+    const r = await fetch(url, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d) });
+    return r.json();
+  },
+
+  async del(url) {
+    if (!navigator.onLine) {
+      await enqueueWrite('DELETE', url, null);
+      return { ok: true, offline: true };
+    }
+    const r = await fetch(url, { method:'DELETE' });
+    return r.json();
+  },
 };
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1195,4 +1346,6 @@ function openQRCode(rid, nome) {
 // ══════════════════════════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════════════════════════
+updateOnlineUI();
+refreshPendingBadge();
 page('musicas');

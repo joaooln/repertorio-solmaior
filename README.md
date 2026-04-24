@@ -1,15 +1,14 @@
 # Repertório Sol Maior
 
-Sistema completo de gerenciamento de cifras e repertórios para cavaquinho.
+Sistema completo de gerenciamento de cifras e repertórios para cavaquinho — com suporte offline, modo apresentação, metrônomo e geração de PDF.
 
 ---
 
 ## Requisitos
 
-- **Python 3.8+** instalado ([python.org](https://python.org))
-- **Chave da API Gemini** (para importar cifras via link)
-  - Crie em: [aistudio.google.com](https://aistudio.google.com/app/apikey)
-- **Banco de dados PostgreSQL** (via Supabase ou similar)
+- **Python 3.8+** ([python.org](https://python.org))
+- **Chave da API Gemini** para importar cifras via link ([aistudio.google.com](https://aistudio.google.com/app/apikey))
+- **Banco de dados PostgreSQL** (ex: [Supabase](https://supabase.com))
 
 ---
 
@@ -21,39 +20,29 @@ Sistema completo de gerenciamento de cifras e repertórios para cavaquinho.
 python start.py
 ```
 
-O script instala as dependências automaticamente, pede a chave da API e abre o navegador.
+Instala dependências automaticamente, pede as credenciais e abre o navegador.
 
 ---
 
 ### Opção 2 — Manual
 
-**1. Instalar dependências:**
 ```bash
-pip install flask google-generativeai reportlab requests beautifulsoup4 lxml psycopg2-binary gunicorn
-```
+# 1. Instalar dependências
+pip install -r requirements.txt
 
-**2. Definir as variáveis de ambiente:**
+# 2. Definir variáveis de ambiente (Mac/Linux)
+export GEMINI_API_KEY=AIza...
+export DATABASE_URL=postgresql://...
 
-- **Windows:**
-  ```cmd
-  set GEMINI_API_KEY=AIza...
-  set DATABASE_URL=postgresql://...
-  ```
-- **Mac/Linux:**
-  ```bash
-  export GEMINI_API_KEY=AIza...
-  export DATABASE_URL=postgresql://...
-  ```
+# Windows
+set GEMINI_API_KEY=AIza...
+set DATABASE_URL=postgresql://...
 
-**3. Iniciar o servidor:**
-```bash
+# 3. Iniciar
 python app.py
 ```
 
-**4. Abrir no navegador:**
-```
-http://localhost:5000
-```
+Acesse em `http://localhost:5000`.
 
 ---
 
@@ -61,16 +50,19 @@ http://localhost:5000
 
 ```
 solmaior/
-├── app.py              ← Backend (Flask + PostgreSQL)
-├── start.py            ← Script de inicialização
-├── requirements.txt    ← Dependências Python
-├── vercel.json         ← Configuração de deploy (Vercel)
-├── Procfile            ← Configuração de servidor (Gunicorn)
+├── app.py                ← Backend Flask + PostgreSQL
+├── start.py              ← Script de inicialização automática
+├── requirements.txt      ← Dependências Python
+├── vercel.json           ← Configuração de deploy (Vercel)
+├── Procfile              ← Configuração Gunicorn
 ├── templates/
-│   └── index.html      ← Shell da aplicação
+│   └── index.html        ← Shell da aplicação (PWA)
 └── static/
-    ├── app.js          ← Lógica do frontend
-    └── style.css       ← Estilos
+    ├── app.js            ← Lógica do frontend
+    ├── idb.js            ← Wrapper IndexedDB (cache offline)
+    ├── sw.js             ← Service Worker
+    ├── manifest.json     ← Manifesto PWA (instalável)
+    └── style.css         ← Estilos
 ```
 
 ---
@@ -78,34 +70,88 @@ solmaior/
 ## Funcionalidades
 
 ### Banco de Músicas
-- **Importar via link** — Cole uma URL do Cifra Club ou Cifras.com.br e a IA extrai a cifra automaticamente
-- **Adicionar manual** — Crie músicas do zero
-- **Editar** — Título, artista, tom, cifra tradicional e tabela de acordes
-- **Transpor tom** — +1/−1 semitom com atualização automática de todos os acordes (cifra + tabela)
+
+| Função | Descrição |
+|--------|-----------|
+| **Importar via link** | Cole uma URL do Cifra Club ou Cifras.com.br — a IA extrai cifra, tabela e tom automaticamente |
+| **Importar em lote** | Cole múltiplos links de uma vez; progresso exibido por linha |
+| **Adicionar manual** | Crie músicas do zero preenchendo título, artista e tom |
+| **Editar** | Título, artista, tom, cifra tradicional, grade de acordes |
+| **Transpor** | +1/−1 semitom em toda a cifra e tabela ao mesmo tempo |
+| **Favoritas** | Marque músicas com estrela e filtre rapidamente |
+| **Tags / estilos** | Categorize por Samba, Forró, Choro, MPB, etc. com chips editáveis |
+| **BPM e duração** | Registre o andamento e tempo de cada música |
+| **Notas internas** | Campo livre por música para anotações de performance |
+| **Busca e filtros** | Filtre por texto, tom, estilo ou favoritas |
+| **PDF individual** | Gere PDF de uma única música (cifra, tabela ou completo) |
 
 ### Repertórios
-- Crie quantos repertórios quiser (um por evento, por exemplo)
-- Adicione músicas do banco com busca
-- **Reordene arrastando** as músicas na lista
-- Renomeie a qualquer momento
 
-### Geração de PDF
-Cada repertório gera um PDF com:
-- **Capa** com nome do repertório
-- **Sumário** com links clicáveis para cada música
-- Para cada música: **cifra tradicional** (letra + acordes) em uma página, **tabela de acordes** estilo Victor Cazzoli na página seguinte
+| Função | Descrição |
+|--------|-----------|
+| **Criar e editar** | Monte quantos repertórios quiser (um por evento, por exemplo) |
+| **Reordenar** | Arraste as músicas para definir a ordem do show |
+| **Duração estimada** | Soma automática do tempo de todas as músicas do repertório |
+| **QR Code** | Gera uma imagem PNG com a lista completa para compartilhar |
+| **PDF do repertório** | Quatro modos: Completo, Só Cifras, Só Grade e Lista de Palco |
+
+### Modo Apresentação
+
+Aberto a partir de qualquer música, ocupa a tela toda com fonte grande — ideal para usar no palco.
+
+- **Auto-scroll** ajustável por velocidade (barra de range)
+- **Metrônomo integrado** com clique sonoro (Web Audio API) e indicador visual pulsante
+- **Controles por teclado:** Espaço = play/pause scroll · ↑↓ = scroll manual · Esc = fechar
+
+### Backup
+
+- **Exportar:** baixa toda a biblioteca (músicas + repertórios) como `backup_solmaior.json`
+- **Importar:** restaura a partir de um arquivo exportado anteriormente; itens já existentes são pulados automaticamente
+
+### Estatísticas
+
+Aba dedicada com:
+- Totais de músicas, favoritas, repertórios e duração acumulada
+- Ranking dos artistas mais cadastrados
+- Distribuição de músicas por tom
+- Nuvem de tags/estilos
 
 ---
 
-## Dica de uso
+## Uso Offline (PWA)
 
-Para importar, use links no formato:
-- `https://www.cifraclub.com.br/artista/musica/`
-- `https://www.cifras.com.br/cifra/artista/musica`
+O app funciona **sem internet** depois da primeira visita:
+
+1. **Service Worker** faz cache do HTML, CSS e JS — o shell carrega offline imediatamente.
+2. **IndexedDB** espelha os dados do servidor localmente — músicas e repertórios ficam disponíveis sem conexão.
+3. **Edições offline** (transpor, salvar notas, reordenar) são salvas localmente e sincronizadas automaticamente quando a conexão é restaurada.
+4. **Instalável:** navegadores modernos permitem "Adicionar à tela inicial" no iOS/Android ou "Instalar app" no desktop.
+
+> **Limitações offline:** importação via IA e criação de novas músicas requerem internet (o servidor gera os IDs e chama a API Gemini).
 
 ---
 
-## Dados
+## Importar cifras
 
-Os dados ficam armazenados no banco PostgreSQL configurado em `DATABASE_URL`.
-A importação via link envia o conteúdo da página para a API Gemini (Google) para extração da cifra.
+URLs suportadas para importação automática:
+```
+https://www.cifraclub.com.br/artista/musica/
+https://www.cifras.com.br/cifra/artista/musica
+```
+
+Se uma música com a mesma URL já existir na biblioteca, o app pergunta se deseja substituir antes de chamar a IA.
+
+---
+
+## Stack técnica
+
+| Camada | Tecnologia |
+|--------|-----------|
+| Backend | Python · Flask · Gunicorn |
+| Banco de dados | PostgreSQL (Supabase) |
+| IA | Google Gemini API (extração de cifras) |
+| PDF | ReportLab |
+| Scraping | BeautifulSoup + Requests |
+| Frontend | Vanilla JS · IndexedDB · Web Audio API |
+| Offline | Service Worker · Cache API |
+| Deploy | Vercel |

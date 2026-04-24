@@ -543,6 +543,27 @@ textarea { resize: vertical; min-height: 120px; font-family: var(--font-m); font
   border-color: var(--gold);
 }
 
+/* Banner offline */
+#offline-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: rgba(230, 126, 34, 0.15);
+  border-bottom: 1px solid rgba(230, 126, 34, 0.35);
+  color: #e8a05a;
+  font-size: 13px;
+  padding: 8px 20px;
+  flex-wrap: wrap;
+}
+#pending-badge {
+  background: rgba(230, 126, 34, 0.25);
+  border: 1px solid rgba(230, 126, 34, 0.4);
+  border-radius: 20px;
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
 /* Filtros */
 .filter-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:12px; padding-top:12px; border-top:1px solid var(--card-border); }
 .filter-sel { background:rgba(255,255,255,0.05); border:1px solid var(--card-border); color:var(--text); font-size:13px; padding:5px 10px; border-radius:8px; cursor:pointer; outline:none; }
