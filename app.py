@@ -1,7 +1,7 @@
 """
 Repertório Sol Maior — Backend Flask + SQLite
 """
-import os, json, re, subprocess, sys, psycopg2
+import os, json, re, subprocess, sys, psycopg2, io
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, send_file
@@ -51,6 +51,15 @@ def init_db():
                 FOREIGN KEY (musica_id)     REFERENCES musicas(id)      ON DELETE CASCADE
             );
             """)
+            # Migração: adiciona colunas novas se ainda não existirem
+            for col_sql in [
+                "ALTER TABLE musicas ADD COLUMN IF NOT EXISTS favorito BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE musicas ADD COLUMN IF NOT EXISTS tags TEXT DEFAULT '[]'",
+                "ALTER TABLE musicas ADD COLUMN IF NOT EXISTS bpm INTEGER",
+                "ALTER TABLE musicas ADD COLUMN IF NOT EXISTS duracao_min FLOAT",
+                "ALTER TABLE musicas ADD COLUMN IF NOT EXISTS notas TEXT DEFAULT ''",
+            ]:
+                cur.execute(col_sql)
         conn.commit()
 
 def gen_id():
@@ -153,18 +162,32 @@ def index():
 
 @app.route('/api/musicas', methods=['GET'])
 def listar_musicas():
-    q = request.args.get('q', '')
+    q        = request.args.get('q', '')
+    favorito = request.args.get('favorito', '')
+    tom      = request.args.get('tom', '')
+    tag      = request.args.get('tag', '')
+    conditions, params = [], []
+    if q:
+        conditions.append("(titulo ILIKE %s OR artista ILIKE %s)")
+        params += [f'%{q}%', f'%{q}%']
+    if favorito == '1':
+        conditions.append("favorito = TRUE")
+    if tom:
+        conditions.append("tom = %s")
+        params.append(tom)
+    where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
     with get_db() as conn:
         with conn.cursor() as cur:
-            if q:
-                cur.execute(
-                    "SELECT * FROM musicas WHERE titulo ILIKE %s OR artista ILIKE %s ORDER BY titulo",
-                    (f'%{q}%', f'%{q}%')
-                )
-            else:
-                cur.execute("SELECT * FROM musicas ORDER BY titulo")
+            cur.execute(f"SELECT * FROM musicas {where} ORDER BY titulo", params)
             rows = cur.fetchall()
-            return jsonify([dict(r) for r in rows])
+            result = []
+            for r in rows:
+                m = dict(r)
+                m['tags'] = json.loads(m.get('tags') or '[]')
+                if tag and tag not in m['tags']:
+                    continue
+                result.append(m)
+            return jsonify(result)
 
 @app.route('/api/musicas', methods=['POST'])
 def criar_musica():
@@ -174,12 +197,15 @@ def criar_musica():
     with get_db() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO musicas (id, titulo, artista, tom, tom_original, cifra_json, tabela_json, url_origem, criado_em, atualizado_em)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                """INSERT INTO musicas (id, titulo, artista, tom, tom_original, cifra_json, tabela_json,
+                       url_origem, favorito, tags, bpm, duracao_min, notas, criado_em, atualizado_em)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (mid, d['titulo'], d['artista'], d.get('tom','C'), d.get('tom','C'),
                  json.dumps(d.get('cifra_tradicional', []), ensure_ascii=False),
                  json.dumps(d.get('tabela', []), ensure_ascii=False),
-                 d.get('url_origem'), n, n)
+                 d.get('url_origem'), d.get('favorito', False),
+                 json.dumps(d.get('tags', []), ensure_ascii=False),
+                 d.get('bpm'), d.get('duracao_min'), d.get('notas', ''), n, n)
             )
         conn.commit()
     return jsonify({'id': mid, 'ok': True})
@@ -194,6 +220,7 @@ def get_musica(mid):
             m = dict(row)
             m['cifra_tradicional'] = json.loads(m['cifra_json'])
             m['tabela'] = json.loads(m['tabela_json'])
+            m['tags'] = json.loads(m['tags'] or '[]')
             return jsonify(m)
 
 @app.route('/api/musicas/<mid>', methods=['PUT'])
@@ -208,7 +235,9 @@ def atualizar_musica(mid):
             cur.execute("""
                 UPDATE musicas SET
                     titulo=%s, artista=%s, tom=%s, tom_original=%s,
-                    cifra_json=%s, tabela_json=%s, url_origem=%s, atualizado_em=%s
+                    cifra_json=%s, tabela_json=%s, url_origem=%s,
+                    favorito=%s, tags=%s, bpm=%s, duracao_min=%s, notas=%s,
+                    atualizado_em=%s
                 WHERE id=%s
             """, (
                 d.get('titulo', row['titulo']),
@@ -218,6 +247,11 @@ def atualizar_musica(mid):
                 json.dumps(d.get('cifra_tradicional', json.loads(row['cifra_json'])), ensure_ascii=False),
                 json.dumps(d.get('tabela', json.loads(row['tabela_json'])), ensure_ascii=False),
                 d.get('url_origem', row['url_origem']),
+                d.get('favorito', row.get('favorito', False)),
+                json.dumps(d.get('tags', json.loads(row.get('tags') or '[]')), ensure_ascii=False),
+                d.get('bpm', row.get('bpm')),
+                d.get('duracao_min', row.get('duracao_min')),
+                d.get('notas', row.get('notas', '')),
                 n, mid
             ))
         conn.commit()
@@ -722,6 +756,204 @@ def gerar_pdf(rid):
 
     nome_arquivo = rep['nome'].replace(' ', '_') + sufixo + '.pdf'
     return send_file(output_path, as_attachment=True, download_name=nome_arquivo, mimetype='application/pdf')
+
+# ─── PDF de música individual ─────────────────────────────────────────────────
+@app.route('/api/musicas/<mid>/pdf', methods=['GET'])
+def pdf_musica(mid):
+    modo = request.args.get('modo', 'completo')
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM musicas WHERE id=%s", (mid,))
+            row = cur.fetchone()
+            if not row: return jsonify({'erro': 'Não encontrada'}), 404
+    m = dict(row)
+    m['cifra_tradicional'] = json.loads(m['cifra_json'])
+    m['tabela'] = json.loads(m['tabela_json'])
+
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable)
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+    import tempfile
+
+    tmp = tempfile.NamedTemporaryFile(suffix='.pdf', delete=False)
+    output_path = tmp.name; tmp.close()
+
+    styles = getSampleStyleSheet()
+    GOLD = colors.HexColor('#d4a853'); DARK = colors.HexColor('#1a1815')
+    MUTED = colors.HexColor('#757067'); GREY_LINE = colors.HexColor('#e8e5df')
+    GOLD_LIGHT = colors.HexColor('#fbf8f1')
+
+    titulo_st  = ParagraphStyle('T',  parent=styles['Normal'], fontSize=20, fontName='Helvetica-Bold', textColor=DARK, spaceAfter=8, leading=26)
+    artista_st = ParagraphStyle('A',  parent=styles['Normal'], fontSize=11, fontName='Helvetica', textColor=MUTED, spaceAfter=16, leading=14)
+    secao_st   = ParagraphStyle('S',  parent=styles['Normal'], fontSize=9,  fontName='Helvetica-Bold', textColor=GOLD, spaceBefore=10, spaceAfter=4, leading=12)
+    acorde_st  = ParagraphStyle('AC', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=DARK, spaceBefore=4, leading=12)
+    letra_st   = ParagraphStyle('L',  parent=styles['Normal'], fontSize=10, fontName='Helvetica', textColor=DARK, spaceAfter=4, leading=14)
+    tab_sec_st = ParagraphStyle('TS', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=DARK, alignment=TA_CENTER, spaceBefore=12, spaceAfter=8)
+
+    doc = SimpleDocTemplate(output_path, pagesize=A4,
+        rightMargin=2*cm, leftMargin=2*cm, topMargin=2.5*cm, bottomMargin=2*cm)
+    story = []
+    story.append(Paragraph(m['titulo'], titulo_st))
+    story.append(Paragraph(f"{m['artista']} &nbsp; • &nbsp; Tom: <b><font color='#d4a853'>{m['tom']}</font></b>", artista_st))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=GREY_LINE, spaceAfter=12))
+
+    if modo != 'tabela' and m['cifra_tradicional']:
+        secao_atual = ''
+        for linha in m['cifra_tradicional']:
+            secao = linha.get('secao', ''); acordes = linha.get('acordes', ''); letra = linha.get('letra', '')
+            if secao and secao != secao_atual:
+                secao_atual = secao; story.append(Paragraph(secao, secao_st))
+            if acordes: story.append(Paragraph(acordes, acorde_st))
+            if letra:   story.append(Paragraph(letra, letra_st))
+        if modo == 'completo' and m['tabela']:
+            story.append(Spacer(1, 0.5*cm))
+            story.append(HRFlowable(width="100%", thickness=0.5, color=GREY_LINE, spaceAfter=12))
+
+    if modo != 'cifra' and m['tabela']:
+        col_w = (A4[0] - 4*cm) / 4
+        for secao in m['tabela']:
+            story.append(Paragraph(secao['nome_secao'].upper(), tab_sec_st))
+            if secao.get('grid'):
+                t = Table(secao['grid'], colWidths=[col_w]*4, rowHeights=32)
+                t.setStyle(TableStyle([
+                    ('GRID', (0,0), (-1,-1), 0.5, GREY_LINE),
+                    ('BACKGROUND', (0,0), (-1,-1), colors.white),
+                    ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                    ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,-1), 11),
+                    ('TEXTCOLOR', (0,0), (-1,-1), DARK),
+                    ('ROWBACKGROUNDS', (0,0), (-1,-1), [colors.white, GOLD_LIGHT]),
+                ]))
+                story.append(t)
+            story.append(Spacer(1, 0.3*cm))
+
+    doc.build(story)
+    nome_arquivo = f"{m['titulo'].replace(' ','_')}_{modo}.pdf"
+    return send_file(output_path, as_attachment=True, download_name=nome_arquivo, mimetype='application/pdf')
+
+# ─── Stats ─────────────────────────────────────────────────────────────────────
+@app.route('/api/stats', methods=['GET'])
+def get_stats():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) as total FROM musicas")
+            total = cur.fetchone()['total']
+            cur.execute("SELECT COUNT(*) as total FROM musicas WHERE favorito = TRUE")
+            favoritas = cur.fetchone()['total']
+            cur.execute("SELECT COUNT(*) as total FROM repertorios")
+            total_reps = cur.fetchone()['total']
+            cur.execute("SELECT artista, COUNT(*) as n FROM musicas GROUP BY artista ORDER BY n DESC LIMIT 5")
+            top_artistas = [dict(r) for r in cur.fetchall()]
+            cur.execute("SELECT tom, COUNT(*) as n FROM musicas GROUP BY tom ORDER BY n DESC LIMIT 8")
+            por_tom = [dict(r) for r in cur.fetchall()]
+            cur.execute("SELECT tags FROM musicas WHERE tags IS NOT NULL AND tags != '[]'")
+            tag_count = {}
+            for row in cur.fetchall():
+                for t in json.loads(row['tags'] or '[]'):
+                    tag_count[t] = tag_count.get(t, 0) + 1
+            top_tags = sorted(tag_count.items(), key=lambda x: -x[1])[:10]
+            cur.execute("SELECT SUM(duracao_min) as total FROM musicas WHERE duracao_min IS NOT NULL")
+            dur = cur.fetchone()['total']
+    return jsonify({
+        'total_musicas': total,
+        'total_favoritas': favoritas,
+        'total_repertorios': total_reps,
+        'top_artistas': top_artistas,
+        'por_tom': por_tom,
+        'top_tags': [{'tag': t, 'n': n} for t, n in top_tags],
+        'duracao_total_min': float(dur) if dur else 0,
+    })
+
+# ─── Backup export / import ────────────────────────────────────────────────────
+@app.route('/api/biblioteca/export', methods=['GET'])
+def exportar_biblioteca():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM musicas ORDER BY titulo")
+            musicas = []
+            for row in cur.fetchall():
+                m = dict(row)
+                m['cifra_tradicional'] = json.loads(m['cifra_json'])
+                m['tabela'] = json.loads(m['tabela_json'])
+                m['tags'] = json.loads(m.get('tags') or '[]')
+                musicas.append(m)
+            cur.execute("SELECT * FROM repertorios ORDER BY nome")
+            reps = []
+            for r in cur.fetchall():
+                rep = dict(r)
+                cur.execute("SELECT musica_id, posicao FROM repertorio_musicas WHERE repertorio_id=%s ORDER BY posicao", (r['id'],))
+                rep['musicas_ids'] = [row['musica_id'] for row in cur.fetchall()]
+                reps.append(rep)
+    data = json.dumps({'musicas': musicas, 'repertorios': reps, 'exportado_em': now_iso()},
+                      ensure_ascii=False, indent=2)
+    buf = io.BytesIO(data.encode('utf-8'))
+    return send_file(buf, as_attachment=True, download_name='backup_solmaior.json', mimetype='application/json')
+
+@app.route('/api/biblioteca/import', methods=['POST'])
+def importar_biblioteca():
+    try:
+        data = request.json
+        musicas = data.get('musicas', [])
+        reps    = data.get('repertorios', [])
+        n = now_iso()
+        imported, skipped = 0, 0
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                for m in musicas:
+                    cur.execute("SELECT id FROM musicas WHERE id=%s", (m['id'],))
+                    if cur.fetchone():
+                        skipped += 1; continue
+                    cur.execute("""INSERT INTO musicas
+                        (id,titulo,artista,tom,tom_original,cifra_json,tabela_json,url_origem,
+                         favorito,tags,bpm,duracao_min,notas,criado_em,atualizado_em)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (m['id'], m['titulo'], m['artista'], m.get('tom','C'), m.get('tom_original','C'),
+                         json.dumps(m.get('cifra_tradicional',[]), ensure_ascii=False),
+                         json.dumps(m.get('tabela',[]), ensure_ascii=False),
+                         m.get('url_origem'), m.get('favorito', False),
+                         json.dumps(m.get('tags',[]), ensure_ascii=False),
+                         m.get('bpm'), m.get('duracao_min'), m.get('notas',''),
+                         m.get('criado_em', n), m.get('atualizado_em', n)))
+                    imported += 1
+                for r in reps:
+                    cur.execute("SELECT id FROM repertorios WHERE id=%s", (r['id'],))
+                    if cur.fetchone(): continue
+                    cur.execute("INSERT INTO repertorios (id,nome,criado_em,atualizado_em) VALUES (%s,%s,%s,%s)",
+                                (r['id'], r['nome'], r.get('criado_em', n), r.get('atualizado_em', n)))
+                    for i, mid in enumerate(r.get('musicas_ids', [])):
+                        cur.execute("SELECT id FROM musicas WHERE id=%s", (mid,))
+                        if cur.fetchone():
+                            cur.execute("""INSERT INTO repertorio_musicas (repertorio_id,musica_id,posicao)
+                                VALUES (%s,%s,%s) ON CONFLICT DO NOTHING""", (r['id'], mid, i))
+            conn.commit()
+        return jsonify({'ok': True, 'importadas': imported, 'puladas': skipped})
+    except Exception as e:
+        return jsonify({'erro': str(e)}), 400
+
+# ─── QR Code do repertório ─────────────────────────────────────────────────────
+@app.route('/api/repertorios/<rid>/qrcode', methods=['GET'])
+def qrcode_repertorio(rid):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT nome FROM repertorios WHERE id=%s", (rid,))
+            rep = cur.fetchone()
+            if not rep: return jsonify({'erro': 'Não encontrado'}), 404
+            cur.execute("""SELECT m.titulo, m.artista, m.tom FROM repertorio_musicas rm
+                JOIN musicas m ON m.id=rm.musica_id WHERE rm.repertorio_id=%s ORDER BY rm.posicao""", (rid,))
+            musicas = cur.fetchall()
+    linhas = [rep['nome'].upper(), '─' * 30]
+    for i, m in enumerate(musicas, 1):
+        linhas.append(f"{i:02d}. {m['titulo']} ({m['tom']})")
+        linhas.append(f"    {m['artista']}")
+    texto = '\n'.join(linhas)
+    import qrcode as qr_lib
+    qr = qr_lib.QRCode(version=None, error_correction=qr_lib.constants.ERROR_CORRECT_M, box_size=8, border=3)
+    qr.add_data(texto); qr.make(fit=True)
+    img = qr.make_image(fill_color='#1a1815', back_color='#fbf8f1')
+    buf = io.BytesIO(); img.save(buf, format='PNG'); buf.seek(0)
+    return send_file(buf, mimetype='image/png')
 
 # ─── Health check & keep-alive ────────────────────────────────────────────────
 @app.route('/health')

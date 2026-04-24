@@ -68,18 +68,37 @@ function page(p) {
   document.querySelectorAll('.nav-item').forEach(e=>e.classList.remove('active'));
   document.getElementById('nav-'+p).classList.add('active');
   if(p==='musicas') renderMusicas();
-  else renderRepertorios();
+  else if(p==='repertorios') renderRepertorios();
+  else renderStats();
 }
 
 // ══════════════════════════════════════════════════════════════════════
 // MÚSICAS
 // ══════════════════════════════════════════════════════════════════════
 let mFilter = '';
+let mFavOnly = false;
+let mTagFilter = '';
+let mTomFilter = '';
 let allMusicas = [];
 
+function buildMusicasUrl() {
+  const p = new URLSearchParams();
+  if(mFilter)    p.set('q', mFilter);
+  if(mFavOnly)   p.set('favorito', '1');
+  if(mTomFilter) p.set('tom', mTomFilter);
+  if(mTagFilter) p.set('tag', mTagFilter);
+  const s = p.toString();
+  return '/api/musicas' + (s ? '?' + s : '');
+}
+
 async function renderMusicas() {
-  allMusicas = await api.get('/api/musicas' + (mFilter ? `?q=${encodeURIComponent(mFilter)}` : ''));
-  const counts = await api.get('/api/musicas');
+  const [allMusicas_, counts] = await Promise.all([
+    api.get(buildMusicasUrl()),
+    api.get('/api/musicas'),
+  ]);
+  allMusicas = allMusicas_;
+
+  const allTags = [...new Set(counts.flatMap(m => m.tags||[]))].sort();
 
   document.getElementById('app-main').innerHTML = `
     <div class="bento-card page-header">
@@ -88,6 +107,7 @@ async function renderMusicas() {
         <div class="page-sub">${counts.length} música${counts.length!==1?'s':''} na biblioteca</div>
       </div>
       <div class="page-actions">
+        <button class="btn btn-ghost" onclick="openBackup()" title="Backup">💾</button>
         <button class="btn btn-ghost" onclick="openImport()">🔗 Importar Link</button>
         <button class="btn btn-ghost" onclick="openImportLote()">📋 Importar em Lote</button>
         <button class="btn btn-primary" onclick="openAddManual()">+ Adicionar</button>
@@ -100,31 +120,45 @@ async function renderMusicas() {
         <input placeholder="Buscar por título ou artista..." value="${mFilter}"
           oninput="mFilter=this.value; renderMusicas()">
       </div>
+      <div class="filter-row">
+        <button class="btn btn-xs ${mFavOnly?'btn-gold':'btn-ghost'}" onclick="mFavOnly=!mFavOnly;renderMusicas()">⭐ Favoritas</button>
+        <select class="filter-sel" onchange="mTomFilter=this.value;renderMusicas()">
+          <option value="">Todos os tons</option>
+          ${[...new Set(counts.map(m=>m.tom))].sort().map(t=>`<option value="${t}" ${mTomFilter===t?'selected':''}>${t}</option>`).join('')}
+        </select>
+        ${allTags.length ? `<select class="filter-sel" onchange="mTagFilter=this.value;renderMusicas()">
+          <option value="">Todos os estilos</option>
+          ${allTags.map(t=>`<option value="${t}" ${mTagFilter===t?'selected':''}>${t}</option>`).join('')}
+        </select>` : ''}
+        ${(mFavOnly||mTomFilter||mTagFilter) ? `<button class="btn btn-xs btn-ghost" onclick="mFavOnly=false;mTomFilter='';mTagFilter='';renderMusicas()">✕ Limpar filtros</button>` : ''}
+      </div>
     </div>
 
     ${allMusicas.length===0 ? `
       <div class="empty">
         <div class="empty-ico">🎵</div>
-        <h3>${mFilter ? 'Nada encontrado' : 'Biblioteca vazia'}</h3>
-        <p>${mFilter ? 'Tente buscar com outras palavras.' : 'A sua caixa de ferramentas está vazia. Adicione uma nova cifra via link ou comece do zero.'}</p>
-        ${!mFilter ? `<button class="btn btn-primary" onclick="openImport()">🔗 Importar via Link</button>` : ''}
+        <h3>${(mFilter||mFavOnly||mTomFilter||mTagFilter) ? 'Nada encontrado' : 'Biblioteca vazia'}</h3>
+        <p>${(mFilter||mFavOnly||mTomFilter||mTagFilter) ? 'Tente outros filtros.' : 'Adicione uma nova cifra via link ou comece do zero.'}</p>
+        ${!(mFilter||mFavOnly||mTomFilter||mTagFilter) ? `<button class="btn btn-primary" onclick="openImport()">🔗 Importar via Link</button>` : ''}
       </div>
     ` : `
       <div class="bento-grid">
         ${allMusicas.map(m=>`
           <div class="bento-card item-card" onclick="openEdit('${m.id}')">
             <div class="ic-header">
-              <div>
-                <div class="ic-title">${m.titulo}</div>
-                <div class="ic-subtitle">${m.artista}</div>
+              <div style="flex:1;min-width:0">
+                <div class="ic-title">${m.favorito ? '⭐ ' : ''}${m.titulo}</div>
+                <div class="ic-subtitle">${m.artista}${m.bpm ? ` · ${m.bpm} BPM` : ''}${m.duracao_min ? ` · ${m.duracao_min}min` : ''}</div>
               </div>
             </div>
             <div class="ic-tags">
               <span class="tag">${m.tom}</span>
               ${m.tom !== m.tom_original ? `<span class="tag danger">orig: ${m.tom_original}</span>` : ''}
-              ${m.url_origem ? `<span class="tag" style="background:rgba(41,128,185,.15);border-color:rgba(41,128,185,.3);color:#7fb3d5">🔗 Link</span>` : ''}
+              ${(m.tags||[]).map(t=>`<span class="tag tag-style">${t}</span>`).join('')}
+              ${m.url_origem ? `<span class="tag" style="background:rgba(41,128,185,.15);border-color:rgba(41,128,185,.3);color:#7fb3d5">🔗</span>` : ''}
             </div>
             <div class="ic-actions" onclick="event.stopPropagation()">
+              <button class="btn btn-ghost btn-sm" onclick="openApresentacao('${m.id}')">▶ Apresentar</button>
               <button class="btn btn-ghost btn-sm" onclick="openEdit('${m.id}')">✏️ Editar</button>
               <button class="btn btn-ghost btn-danger btn-sm btn-icon-only" onclick="delMusica('${m.id}','${m.titulo.replace(/'/g,"\\'")}')">🗑️</button>
             </div>
@@ -361,9 +395,19 @@ function renderEditModal() {
         <div class="form-group"><label>Título</label><input id="e-titulo" value="${m.titulo}"></div>
         <div class="form-group"><label>Artista</label><input id="e-artista" value="${m.artista}"></div>
       </div>
-      <div class="form-group">
-        <label>Tom Original</label>
-        <input id="e-tom-orig" value="${m.tom_original}">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Tom Original</label>
+          <input id="e-tom-orig" value="${m.tom_original}">
+        </div>
+        <div class="form-group">
+          <label>BPM</label>
+          <input id="e-bpm" type="number" min="40" max="300" placeholder="Ex: 120" value="${m.bpm||''}">
+        </div>
+        <div class="form-group">
+          <label>Duração (min)</label>
+          <input id="e-duracao" type="number" min="0" step="0.5" placeholder="Ex: 3.5" value="${m.duracao_min||''}">
+        </div>
       </div>
       <div class="form-group">
         <label>Transposição (Tom Atual)</label>
@@ -374,6 +418,26 @@ function renderEditModal() {
           <button class="btn btn-ghost btn-sm" onclick="doTransp(0,true)">↺ Resetar</button>
         </div>
         ${diffSt!==0 ? `<div style="font-size:12px;color:var(--text-dim);margin-top:4px;">Transposto ${diffSt>0?'+':''}${diffSt} semitons do original (${m.tom_original})</div>` : ''}
+      </div>
+      <div class="form-group">
+        <label>Estilos / Tags</label>
+        <div class="tags-editor" id="tags-editor">
+          ${(m.tags||[]).map(t=>`<span class="tag-chip">${t}<button onclick="removeTag('${t.replace(/'/g,"\\'")}')">×</button></span>`).join('')}
+          <input id="tag-input" placeholder="Adicionar estilo..." onkeydown="if(event.key==='Enter'||event.key===','){event.preventDefault();addTag()}" style="border:none;background:transparent;outline:none;flex:1;min-width:100px;color:var(--text);font-size:13px;">
+        </div>
+        <div class="tag-suggestions" id="tag-suggestions">
+          ${['Samba','Forró','Bossa Nova','Choro','Pagode','Axé','Sertanejo','MPB','Gospel','Internacional','Rock','Pop'].map(t=>`<span class="tag-sug" onclick="addTagDirect('${t}')">${t}</span>`).join('')}
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Notas / Observações</label>
+        <textarea id="e-notas" rows="2" placeholder="Ex: Entrar depois do intro, repetir refrão no final...">${m.notas||''}</textarea>
+      </div>
+      <div class="form-group" style="display:flex;align-items:center;gap:10px;">
+        <label style="margin:0;cursor:pointer;display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="e-favorito" ${m.favorito?'checked':''} style="width:16px;height:16px;">
+          <span>Marcar como favorita ⭐</span>
+        </label>
       </div>
       ${m.url_origem ? `
         <div class="form-group">
@@ -406,8 +470,9 @@ function renderEditModal() {
 
     <div class="modal-footer">
       <button class="btn btn-danger btn-sm" onclick="delMusica('${m.id}','${m.titulo.replace(/'/g,"\\'")}',true)">🗑️ Excluir</button>
+      <button class="btn btn-ghost btn-sm" onclick="openPDFMusica('${m.id}','${m.titulo.replace(/'/g,"\\'")}')">📄 PDF</button>
       <button class="btn btn-ghost" onclick="closeModal()">Fechar</button>
-      <button class="btn btn-primary" onclick="doSave()">💾 Salvar Modificações</button>
+      <button class="btn btn-primary" onclick="doSave()">💾 Salvar</button>
     </div>
   `, 'modal-lg');
 }
@@ -423,8 +488,37 @@ function collectEdits() {
   if(document.getElementById('e-titulo'))   editM.titulo   = document.getElementById('e-titulo').value;
   if(document.getElementById('e-artista'))  editM.artista  = document.getElementById('e-artista').value;
   if(document.getElementById('e-tom-orig')) editM.tom_original = document.getElementById('e-tom-orig').value;
+  if(document.getElementById('e-bpm'))      editM.bpm = parseInt(document.getElementById('e-bpm').value)||null;
+  if(document.getElementById('e-duracao'))  editM.duracao_min = parseFloat(document.getElementById('e-duracao').value)||null;
+  if(document.getElementById('e-notas'))    editM.notas = document.getElementById('e-notas').value;
+  if(document.getElementById('e-favorito')) editM.favorito = document.getElementById('e-favorito').checked;
   if(document.getElementById('e-cifra'))    editM.cifra_tradicional = parseCifra(document.getElementById('e-cifra').value);
   if(document.getElementById('e-tabela'))   editM.tabela   = parseTabela(document.getElementById('e-tabela').value);
+}
+
+function addTag() {
+  const input = document.getElementById('tag-input');
+  const val = input.value.trim().replace(/,$/,'');
+  if(!val) return;
+  if(!editM.tags) editM.tags = [];
+  if(!editM.tags.includes(val)) editM.tags.push(val);
+  input.value = '';
+  renderTagsEditor();
+}
+function addTagDirect(t) {
+  if(!editM.tags) editM.tags = [];
+  if(!editM.tags.includes(t)) { editM.tags.push(t); renderTagsEditor(); }
+}
+function removeTag(t) {
+  editM.tags = (editM.tags||[]).filter(x=>x!==t);
+  renderTagsEditor();
+}
+function renderTagsEditor() {
+  const ed = document.getElementById('tags-editor');
+  if(!ed) return;
+  const chips = (editM.tags||[]).map(t=>`<span class="tag-chip">${t}<button onclick="removeTag('${t.replace(/'/g,"\\'")}')">×</button></span>`).join('');
+  const input = `<input id="tag-input" placeholder="Adicionar estilo..." onkeydown="if(event.key==='Enter'||event.key===','){event.preventDefault();addTag()}" style="border:none;background:transparent;outline:none;flex:1;min-width:100px;color:var(--text);font-size:13px;">`;
+  ed.innerHTML = chips + input;
 }
 
 async function doSave() {
@@ -509,6 +603,285 @@ async function delMusica(id, titulo, fromModal=false) {
   });
 }
 
+// ── PDF individual ─────────────────────────────────────────────────────
+function openPDFMusica(id, titulo) {
+  modal(`
+    <div class="modal-header">
+      <h3 class="modal-title">📄 PDF — ${titulo}</h3>
+      <button class="close-btn" onclick="closeModal()">×</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;padding:8px 0 16px">
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadMusicaPDF('${id}','${titulo.replace(/'/g,"\\'")}','completo')">
+        <span style="font-size:18px">📚</span>
+        <div style="text-align:left"><div style="font-weight:600">Cifra + Grade de Acordes</div><div style="font-size:12px;color:var(--text-dim)">Letra com acordes e mapa de compassos</div></div>
+      </button>
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadMusicaPDF('${id}','${titulo.replace(/'/g,"\\'")}','cifra')">
+        <span style="font-size:18px">🎵</span>
+        <div style="text-align:left"><div style="font-weight:600">Só Cifra com Letra</div><div style="font-size:12px;color:var(--text-dim)">Acordes acima da letra, sem grade</div></div>
+      </button>
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadMusicaPDF('${id}','${titulo.replace(/'/g,"\\'")}','tabela')">
+        <span style="font-size:18px">🗂️</span>
+        <div style="text-align:left"><div style="font-weight:600">Só Mapa de Acordes</div><div style="font-size:12px;color:var(--text-dim)">Grade de compassos por seção</div></div>
+      </button>
+    </div>`, 'modal-sm');
+}
+
+async function _downloadMusicaPDF(id, titulo, modo) {
+  loading('Gerando PDF...');
+  try {
+    const resp = await fetch(`/api/musicas/${id}/pdf?modo=${modo}`);
+    if(!resp.ok) { const e=await resp.json(); throw new Error(e.erro||'Erro'); }
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = titulo.replace(/[^a-z0-9]/gi,'_')+`_${modo}.pdf`; a.click();
+    URL.revokeObjectURL(url);
+    toast('✅ PDF baixado!');
+  } catch(e) { toast('❌ '+e.message,'err'); }
+  finally { unload(); }
+}
+
+// ── Backup ─────────────────────────────────────────────────────────────
+function openBackup() {
+  modal(`
+    <div class="modal-header">
+      <h3 class="modal-title">💾 Backup da Biblioteca</h3>
+      <button class="close-btn" onclick="closeModal()">×</button>
+    </div>
+    <div class="info-box">Exporte todas as músicas e repertórios em um arquivo JSON. Para restaurar, importe o mesmo arquivo.</div>
+    <div style="display:flex;flex-direction:column;gap:12px;padding:8px 0 16px">
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_exportBackup()">
+        <span style="font-size:18px">⬇️</span>
+        <div style="text-align:left"><div style="font-weight:600">Exportar Backup</div><div style="font-size:12px;color:var(--text-dim)">Baixar backup_solmaior.json com todos os dados</div></div>
+      </button>
+      <div class="pdf-opt-btn" style="display:flex;align-items:center;gap:16px;cursor:pointer;" onclick="document.getElementById('import-file').click()">
+        <span style="font-size:18px">⬆️</span>
+        <div style="text-align:left;flex:1"><div style="font-weight:600">Importar Backup</div><div style="font-size:12px;color:var(--text-dim)">Restaurar músicas de um arquivo JSON exportado anteriormente</div></div>
+        <input type="file" id="import-file" accept=".json" style="display:none" onchange="doImportBackup(this)">
+      </div>
+    </div>`, 'modal-sm');
+}
+
+async function _exportBackup() {
+  loading('Exportando...');
+  try {
+    const resp = await fetch('/api/biblioteca/export');
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download='backup_solmaior.json'; a.click();
+    URL.revokeObjectURL(url);
+    toast('✅ Backup exportado!');
+  } catch(e) { toast('❌ '+e.message,'err'); }
+  finally { unload(); }
+}
+
+async function doImportBackup(input) {
+  const file = input.files[0];
+  if(!file) return;
+  loading('Importando...');
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const r = await api.post('/api/biblioteca/import', data);
+    if(r.erro) throw new Error(r.erro);
+    closeModal();
+    toast(`✅ ${r.importadas} música${r.importadas!==1?'s':''} importada${r.importadas!==1?'s':''}${r.puladas?' ('+r.puladas+' já existiam)':''}`);
+    renderMusicas();
+  } catch(e) { toast('❌ '+e.message,'err'); }
+  finally { unload(); }
+}
+
+// ── Modo Apresentação ──────────────────────────────────────────────────
+async function openApresentacao(id) {
+  const m = await api.get(`/api/musicas/${id}`);
+  const cifra = m.cifra_tradicional || [];
+
+  const linhas = [];
+  let secaoAtual = '';
+  for(const l of cifra) {
+    if(l.secao && l.secao !== secaoAtual) {
+      secaoAtual = l.secao;
+      linhas.push({tipo:'secao', texto: l.secao});
+    }
+    if(l.acordes) linhas.push({tipo:'acorde', texto: l.acordes});
+    if(l.letra)   linhas.push({tipo:'letra',  texto: l.letra});
+  }
+
+  const bpm = m.bpm || 80;
+  const scrollSpeed = Math.max(0.3, Math.min(3, bpm / 80));
+
+  const html = linhas.map(l => {
+    if(l.tipo==='secao')  return `<div class="ap-secao">${l.texto}</div>`;
+    if(l.tipo==='acorde') return `<div class="ap-acorde">${l.texto}</div>`;
+    return `<div class="ap-letra">${l.texto}</div>`;
+  }).join('');
+
+  document.body.insertAdjacentHTML('beforeend', `
+    <div class="ap-overlay" id="ap-root">
+      <div class="ap-header">
+        <div>
+          <div class="ap-titulo">${m.titulo}</div>
+          <div class="ap-artista">${m.artista} · Tom: ${m.tom}${m.bpm?' · '+m.bpm+' BPM':''}</div>
+        </div>
+        <div class="ap-controls">
+          <button class="ap-btn" id="ap-metro-btn" onclick="toggleMetronomo()" title="Metrônomo">🥁</button>
+          <button class="ap-btn" id="ap-scroll-btn" onclick="toggleAutoScroll()" title="Auto-scroll">▶</button>
+          <span class="ap-speed-label">Velocidade:</span>
+          <input type="range" min="0.2" max="4" step="0.1" value="${scrollSpeed.toFixed(1)}" id="ap-speed" oninput="setScrollSpeed(this.value)" style="width:80px">
+          <button class="ap-btn" onclick="closeApresentacao()">✕</button>
+        </div>
+      </div>
+      <div class="ap-body" id="ap-body">${html || '<div style="color:#888;padding:40px;text-align:center">Nenhuma cifra cadastrada</div>'}</div>
+      <div class="ap-metro" id="ap-metro" style="display:none">
+        <div id="ap-metro-beat" class="metro-beat"></div>
+        <div style="font-size:13px;color:#aaa;margin-top:8px" id="ap-metro-info">${bpm} BPM</div>
+      </div>
+    </div>`);
+
+  document.addEventListener('keydown', apKeyHandler);
+}
+
+let _apScrollInterval = null;
+let _apScrollActive   = false;
+let _apScrollSpeed    = 1;
+let _apMetroInterval  = null;
+let _apMetroActive    = false;
+
+function toggleAutoScroll() {
+  _apScrollActive = !_apScrollActive;
+  const btn = document.getElementById('ap-scroll-btn');
+  if(_apScrollActive) {
+    btn.textContent = '⏸'; btn.style.color = 'var(--gold)';
+    _apScrollInterval = setInterval(() => {
+      const body = document.getElementById('ap-body');
+      if(body) body.scrollTop += _apScrollSpeed;
+    }, 30);
+  } else {
+    btn.textContent = '▶'; btn.style.color = '';
+    clearInterval(_apScrollInterval);
+  }
+}
+
+function setScrollSpeed(v) {
+  _apScrollSpeed = parseFloat(v);
+}
+
+function toggleMetronomo() {
+  _apMetroActive = !_apMetroActive;
+  const btn   = document.getElementById('ap-metro-btn');
+  const panel = document.getElementById('ap-metro');
+  if(_apMetroActive) {
+    btn.style.color = 'var(--gold)';
+    panel.style.display = 'flex';
+    _startMetronomo();
+  } else {
+    btn.style.color = '';
+    panel.style.display = 'none';
+    clearInterval(_apMetroInterval);
+  }
+}
+
+function _startMetronomo() {
+  const speedInput = document.getElementById('ap-speed');
+  const infoEl = document.getElementById('ap-metro-info');
+  const beat = document.getElementById('ap-metro-beat');
+  const bpmInput = document.getElementById('ap-bpm-input');
+  const bpm = bpmInput ? parseInt(bpmInput.value)||80 : 80;
+  const ms = Math.round(60000 / bpm);
+  if(infoEl) infoEl.textContent = bpm + ' BPM';
+  clearInterval(_apMetroInterval);
+  _apMetroInterval = setInterval(() => {
+    if(beat) { beat.classList.add('pulse'); setTimeout(()=>beat.classList.remove('pulse'), 100); }
+    try {
+      const ctx = new (window.AudioContext||window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.value = 880; gain.gain.value = 0.3;
+      osc.start(); osc.stop(ctx.currentTime + 0.05);
+    } catch(e) {}
+  }, ms);
+}
+
+function apKeyHandler(e) {
+  if(e.key === 'Escape') closeApresentacao();
+  if(e.key === ' ') { e.preventDefault(); toggleAutoScroll(); }
+  if(e.key === 'ArrowUp')   { const b=document.getElementById('ap-body'); if(b) b.scrollTop -= 80; }
+  if(e.key === 'ArrowDown') { const b=document.getElementById('ap-body'); if(b) b.scrollTop += 80; }
+}
+
+function closeApresentacao() {
+  clearInterval(_apScrollInterval); clearInterval(_apMetroInterval);
+  _apScrollActive=false; _apMetroActive=false;
+  document.removeEventListener('keydown', apKeyHandler);
+  document.getElementById('ap-root')?.remove();
+}
+
+// ── Stats ──────────────────────────────────────────────────────────────
+async function renderStats() {
+  const stats = await api.get('/api/stats');
+  const horas = Math.floor(stats.duracao_total_min/60);
+  const mins  = Math.round(stats.duracao_total_min % 60);
+  const durStr = stats.duracao_total_min > 0 ? (horas > 0 ? `${horas}h ${mins}min` : `${mins}min`) : '—';
+
+  document.getElementById('app-main').innerHTML = `
+    <div class="bento-card page-header">
+      <div>
+        <div class="page-title">Estatísticas</div>
+        <div class="page-sub">Visão geral da sua biblioteca</div>
+      </div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="bento-card stat-card">
+        <div class="stat-num">${stats.total_musicas}</div>
+        <div class="stat-label">Músicas</div>
+      </div>
+      <div class="bento-card stat-card">
+        <div class="stat-num">${stats.total_favoritas}</div>
+        <div class="stat-label">Favoritas ⭐</div>
+      </div>
+      <div class="bento-card stat-card">
+        <div class="stat-num">${stats.total_repertorios}</div>
+        <div class="stat-label">Repertórios</div>
+      </div>
+      <div class="bento-card stat-card">
+        <div class="stat-num">${durStr}</div>
+        <div class="stat-label">Duração total</div>
+      </div>
+    </div>
+
+    <div class="stats-row">
+      <div class="bento-card" style="flex:1">
+        <div class="col-title">Top Artistas</div>
+        ${stats.top_artistas.map(a=>`
+          <div class="stat-bar-row">
+            <span class="stat-bar-label">${a.artista}</span>
+            <div class="stat-bar-wrap"><div class="stat-bar" style="width:${Math.round(a.n/stats.top_artistas[0].n*100)}%"></div></div>
+            <span class="stat-bar-val">${a.n}</span>
+          </div>`).join('') || '<div style="color:var(--text-dim);font-size:13px">Nenhum dado ainda</div>'}
+      </div>
+      <div class="bento-card" style="flex:1">
+        <div class="col-title">Por Tom</div>
+        ${stats.por_tom.map(t=>`
+          <div class="stat-bar-row">
+            <span class="stat-bar-label" style="color:var(--gold);font-family:var(--font-m)">${t.tom}</span>
+            <div class="stat-bar-wrap"><div class="stat-bar" style="width:${Math.round(t.n/stats.por_tom[0].n*100)}%;background:rgba(212,168,83,.5)"></div></div>
+            <span class="stat-bar-val">${t.n}</span>
+          </div>`).join('') || '<div style="color:var(--text-dim);font-size:13px">Nenhum dado ainda</div>'}
+      </div>
+    </div>
+
+    ${stats.top_tags.length ? `
+    <div class="bento-card">
+      <div class="col-title">Estilos na Biblioteca</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;padding-top:4px">
+        ${stats.top_tags.map(t=>`<span class="tag tag-style" style="font-size:14px;padding:6px 14px">${t.tag} <span style="color:var(--text-dim);font-size:11px">(${t.n})</span></span>`).join('')}
+      </div>
+    </div>` : ''}
+  `;
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // REPERTÓRIOS
 // ══════════════════════════════════════════════════════════════════════
@@ -536,14 +909,17 @@ async function renderRepertorios() {
       <div class="bento-grid-large">
         ${allReps.map(r => {
           const songs = r.musicas||[];
+          const durTotal = songs.reduce((acc,s)=>acc+(s.duracao_min||0),0);
+          const durStr = durTotal > 0 ? (durTotal>=60 ? `${Math.floor(durTotal/60)}h${Math.round(durTotal%60)}min` : `~${Math.round(durTotal)}min`) : '';
           return `
             <div class="bento-card item-card">
               <div class="ic-header">
                 <div>
                   <div class="ic-title">${r.nome}</div>
-                  <div class="ic-subtitle">${songs.length} música${songs.length!==1?'s':''}</div>
+                  <div class="ic-subtitle">${songs.length} música${songs.length!==1?'s':''}${durStr?' · '+durStr:''}</div>
                 </div>
                 <div style="display:flex;gap:4px">
+                  <button class="btn btn-ghost btn-sm btn-icon-only" onclick="openQRCode('${r.id}','${r.nome.replace(/'/g,"\\'")}')">QR</button>
                   <button class="btn btn-ghost btn-sm btn-icon-only" onclick="openEditRep('${r.id}')" title="Gerenciar">✏️</button>
                   <button class="btn btn-ghost btn-danger btn-sm btn-icon-only" onclick="delRep('${r.id}','${r.nome.replace(/'/g,"\\'")}')">🗑️</button>
                 </div>
@@ -557,7 +933,7 @@ async function renderRepertorios() {
               </div>
               <div class="ic-actions">
                 <button class="btn btn-ghost btn-sm" onclick="openEditRep('${r.id}')" style="flex:1">Ajustar Setup</button>
-                <button class="btn btn-green btn-sm" onclick="gerarPDF('${r.id}','${r.nome.replace(/'/g,"\\'")}')" style="flex:1">📄 Gerar PDF</button>
+                <button class="btn btn-green btn-sm" onclick="gerarPDF('${r.id}','${r.nome.replace(/'/g,"\\'")}')" style="flex:1">📄 PDF</button>
               </div>
             </div>`;
         }).join('')}
@@ -795,6 +1171,25 @@ async function _downloadPDF(id, nome, modo) {
   } finally {
     unload();
   }
+}
+
+// ── QR Code ────────────────────────────────────────────────────────────
+function openQRCode(rid, nome) {
+  modal(`
+    <div class="modal-header">
+      <h3 class="modal-title">QR Code — ${nome}</h3>
+      <button class="close-btn" onclick="closeModal()">×</button>
+    </div>
+    <div style="text-align:center;padding:20px">
+      <div style="font-size:13px;color:var(--text-dim);margin-bottom:16px">Escaneie para ver a lista de músicas</div>
+      <img src="/api/repertorios/${rid}/qrcode" alt="QR Code" style="width:220px;height:220px;border-radius:12px;border:4px solid var(--card-border)">
+      <div style="margin-top:16px">
+        <a href="/api/repertorios/${rid}/qrcode" download="${nome.replace(/\s+/g,'_')}_qr.png" class="btn btn-ghost btn-sm">⬇️ Baixar PNG</a>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Fechar</button>
+    </div>`, 'modal-sm');
 }
 
 // ══════════════════════════════════════════════════════════════════════
