@@ -754,7 +754,8 @@ function parseTabela(text) {
     if(t.startsWith('##')) {
       if(cur) secoes.push(cur);
       cur = {nome_secao: t.replace(/^##\s*/,''), grid: []};
-    } else if(cur) {
+    } else {
+      if(!cur) cur = {nome_secao: 'Principal', grid: []};
       const cells = t.split('|').map(c=>c.trim()).filter(Boolean);
       if(cells.length) cur.grid.push(cells);
     }
