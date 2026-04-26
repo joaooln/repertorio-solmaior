@@ -687,11 +687,14 @@ function renderTagsEditor() {
 
 async function doSave() {
   collectEdits();
+  const tabelaSecoesCount = (editM.tabela||[]).length;
   try {
     const r = await api.put(`/api/musicas/${editM.id}`, editM);
     if (r.erro) throw new Error(r.erro);
     closeModal();
-    toast(r.offline ? '💾 Salvo localmente — será sincronizado quando conectar' : '✅ Salvo com sucesso!');
+    let msg = r.offline ? '💾 Salvo localmente — será sincronizado quando conectar' : '✅ Salvo!';
+    if (editTab === 'tabela' && tabelaSecoesCount > 0) msg += ` Grade: ${tabelaSecoesCount} seção(ões)`;
+    toast(msg);
     renderMusicas();
   } catch(e) {
     toast('❌ Erro ao salvar: ' + e.message, 'err');
