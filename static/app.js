@@ -497,10 +497,15 @@ async function doAddManual() {
   const artista = document.getElementById('nm-artista').value.trim();
   const tom     = document.getElementById('nm-tom').value.trim() || 'C';
   if(!titulo||!artista) { toast('Preencha título e artista','err'); return; }
-  const r = await api.post('/api/musicas', {titulo, artista, tom});
-  closeModal();
-  await renderMusicas();
-  setTimeout(() => openEdit(r.id), 200);
+  try {
+    const r = await api.post('/api/musicas', {titulo, artista, tom});
+    if(r.erro) throw new Error(r.erro);
+    closeModal();
+    await renderMusicas();
+    setTimeout(() => openEdit(r.id), 200);
+  } catch(e) {
+    toast('❌ ' + e.message, 'err');
+  }
 }
 
 // ── Editar música ──────────────────────────────────────────────────────
@@ -674,10 +679,15 @@ function renderTagsEditor() {
 
 async function doSave() {
   collectEdits();
-  await api.put(`/api/musicas/${editM.id}`, editM);
-  closeModal();
-  toast('✅ Salvo com sucesso!');
-  renderMusicas();
+  try {
+    const r = await api.put(`/api/musicas/${editM.id}`, editM);
+    if (r.erro) throw new Error(r.erro);
+    closeModal();
+    toast(r.offline ? '💾 Salvo localmente — será sincronizado quando conectar' : '✅ Salvo com sucesso!');
+    renderMusicas();
+  } catch(e) {
+    toast('❌ Erro ao salvar: ' + e.message, 'err');
+  }
 }
 
 async function doTransp(st, reset=false) {
@@ -1112,10 +1122,15 @@ function openNovoRep() {
 async function doNovoRep() {
   const nome = document.getElementById('rep-nome').value.trim();
   if(!nome) { toast('Digite um nome válido','err'); return; }
-  const r = await api.post('/api/repertorios', {nome});
-  closeModal();
-  await renderRepertorios();
-  setTimeout(()=>openEditRep(r.id), 200);
+  try {
+    const r = await api.post('/api/repertorios', {nome});
+    if(r.erro) throw new Error(r.erro);
+    closeModal();
+    await renderRepertorios();
+    setTimeout(()=>openEditRep(r.id), 200);
+  } catch(e) {
+    toast('❌ ' + e.message, 'err');
+  }
 }
 
 // ── Editar repertório ──────────────────────────────────────────────────

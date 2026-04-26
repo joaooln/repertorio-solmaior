@@ -974,4 +974,10 @@ def health():
     except Exception as e:
         return jsonify({"status": "error", "detail": str(e)}), 500
 
+# ─── Inicialização automática (Vercel e outros ambientes sem start.py) ────────
+try:
+    init_db()
+except Exception as _e:
+    print(f"[init_db] aviso: {_e}")
+
 # ──────────────────────────────────────────────────────────────────────────────
