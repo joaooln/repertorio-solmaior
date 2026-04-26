@@ -231,6 +231,13 @@ let mFavOnly = false;
 let mTagFilter = '';
 let mTomFilter = '';
 let allMusicas = [];
+let _searchTimer = null;
+
+function onSearchInput(val) {
+  mFilter = val;
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(renderMusicas, 300);
+}
 
 function buildMusicasUrl() {
   const p = new URLSearchParams();
@@ -269,7 +276,8 @@ async function renderMusicas() {
       <div class="search-wrap">
         <span class="search-ico">🔍</span>
         <input placeholder="Buscar por título ou artista..." value="${mFilter}"
-          oninput="mFilter=this.value; renderMusicas()">
+          oninput="onSearchInput(this.value)"
+          id="search-input">
       </div>
       <div class="filter-row">
         <button class="btn btn-xs ${mFavOnly?'btn-gold':'btn-ghost'}" onclick="mFavOnly=!mFavOnly;renderMusicas()">⭐ Favoritas</button>
