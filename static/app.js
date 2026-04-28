@@ -955,6 +955,47 @@ let _apMetroInterval  = null;
 let _apMetroActive    = false;
 let _apBpm            = 80;
 let _apBeat           = 0;
+let _apRepList        = [];
+let _apRepIdx         = -1;
+
+async function openPalcoRep(id) {
+  const reps = await api.get('/api/repertorios');
+  const rep = reps.find(r => r.id === id);
+  if (!rep || !rep.musicas || rep.musicas.length === 0) {
+    toast('Repertório sem músicas', 'warn'); return;
+  }
+  _apRepList = rep.musicas;
+  _apRepIdx  = 0;
+  await openApresentacao(_apRepList[0].id);
+  _renderRepNav();
+}
+
+function _renderRepNav() {
+  if (_apRepList.length === 0) return;
+  const bar = document.querySelector('.ap-bar');
+  if (!bar || document.getElementById('ap-rep-nav')) return;
+  const nav = document.createElement('div');
+  nav.id = 'ap-rep-nav';
+  nav.style.cssText = 'display:flex;align-items:center;gap:8px;margin-left:auto;margin-right:8px';
+  nav.innerHTML = `
+    <button class="ap-btn" onclick="apRepNav(-1)" title="Música anterior">◀</button>
+    <span id="ap-rep-pos" style="font-size:12px;color:var(--text-dim);font-family:var(--font-m);min-width:40px;text-align:center">
+      ${_apRepIdx+1}/${_apRepList.length}
+    </span>
+    <button class="ap-btn" onclick="apRepNav(1)" title="Próxima música">▶</button>`;
+  bar.querySelector('.ap-controls').before(nav);
+}
+
+async function apRepNav(dir) {
+  const next = _apRepIdx + dir;
+  if (next < 0 || next >= _apRepList.length) return;
+  _apRepIdx = next;
+  closeApresentacao();
+  await openApresentacao(_apRepList[_apRepIdx].id);
+  _renderRepNav();
+  const pos = document.getElementById('ap-rep-pos');
+  if (pos) pos.textContent = `${_apRepIdx+1}/${_apRepList.length}`;
+}
 
 function toggleAutoScroll() {
   _apScrollActive = !_apScrollActive;
@@ -1176,7 +1217,7 @@ async function renderRepertorios() {
                   <div style="display:flex;gap:6px" onclick="event.stopPropagation()">
                     <button class="btn btn-quiet btn-sm" onclick="openQRCode('${r.id}','${nomeEsc}')">QR</button>
                     <button class="btn btn-quiet btn-sm" onclick="gerarPDF('${r.id}','${nomeEsc}')">PDF</button>
-                    <button class="btn btn-ghost btn-sm" onclick="openEditRep('${r.id}')">▶ Palco</button>
+                    <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openPalcoRep('${r.id}')">▶ Palco</button>
                   </div>
                 </div>
               </div>`;
