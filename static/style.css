@@ -67,8 +67,6 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; }
-
 body {
   background: var(--bg);
   background-image:
@@ -81,30 +79,28 @@ body {
   font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
   letter-spacing: -0.005em;
-  overflow: hidden;
 }
 
 button { font-family: inherit; cursor: pointer; }
 
 /* ── App shell ─────────────────────────── */
-.app-shell {
-  display: grid;
-  grid-template-columns: 248px 1fr;
-  grid-template-rows: 100vh;
-  height: 100vh;
-  width: 100vw;
-  overflow: hidden;
-}
+.app-shell { display: block; }
 
 /* Sidebar */
 .side {
+  position: fixed;
+  top: 0; left: 0;
+  width: 248px;
+  height: 100vh;
   border-right: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(255,255,255,0.015), transparent);
+  background: var(--bg);
+  background-image: linear-gradient(180deg, rgba(255,255,255,0.015), transparent);
   padding: 28px 18px;
   display: flex;
   flex-direction: column;
   gap: 28px;
   overflow: hidden;
+  z-index: 100;
 }
 
 .brand { display: flex; flex-direction: column; padding: 0 8px; gap: 2px; }
@@ -200,8 +196,8 @@ button { font-family: inherit; cursor: pointer; }
 
 /* Main area */
 .main {
-  overflow-y: auto;
-  height: 100%;
+  margin-left: 248px;
+  min-height: 100vh;
 }
 
 /* Page bar + body */
