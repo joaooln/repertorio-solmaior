@@ -204,6 +204,7 @@ button { font-family: inherit; cursor: pointer; }
   overflow: hidden;
   position: relative;
   min-height: 0;
+  height: 100%;
 }
 
 /* Page bar + body */
@@ -230,6 +231,7 @@ button { font-family: inherit; cursor: pointer; }
 
 .page-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: var(--pad-page);
   display: flex; flex-direction: column;
