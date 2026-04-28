@@ -5,12 +5,13 @@ let _isOnline = navigator.onLine;
 
 function updateOnlineUI() {
   _isOnline = navigator.onLine;
-  const banner = document.getElementById('offline-banner');
-  const dot    = document.getElementById('conn-dot');
-  const text   = document.getElementById('conn-text');
+  const banner    = document.getElementById('offline-banner');
+  const indicator = document.getElementById('conn-indicator');
   if (banner) banner.style.display = _isOnline ? 'none' : 'flex';
-  if (dot)  dot.className  = 'conn-dot' + (_isOnline ? '' : ' off');
-  if (text) text.textContent = _isOnline ? 'Online · sincronizado' : 'Offline — cache local';
+  if (indicator) {
+    indicator.style.background = _isOnline ? '' : '#e67e22';
+    indicator.title = _isOnline ? 'Online' : 'Offline — dados do cache';
+  }
   if (_isOnline) syncPendingWrites();
 }
 
@@ -164,7 +165,9 @@ const api = {
 function toast(msg, type='ok') {
   const el = document.getElementById('toast');
   el.textContent = msg;
-  el.className = 'toast show' + (type === 'err' ? ' toast-err' : type === 'warn' ? ' toast-warn' : '');
+  el.style.background = type==='err' ? 'rgba(192, 57, 43, 0.9)' : type==='warn' ? 'rgba(230, 126, 34, 0.9)' : 'rgba(39, 174, 96, 0.9)';
+  el.style.color = '#fff';
+  el.classList.add('show');
   clearTimeout(el._t);
   el._t = setTimeout(() => el.classList.remove('show'), 3500);
 }
@@ -254,94 +257,74 @@ async function renderMusicas() {
   allMusicas = allMusicas_;
 
   const allTags = [...new Set(counts.flatMap(m => m.tags||[]))].sort();
-  const favCount = counts.filter(m => m.favorito).length;
-  const noFilter = !mFavOnly && !mTagFilter;
-
-  // Update sidebar count
-  const nc = document.getElementById('nav-count-musicas');
-  if (nc) nc.textContent = counts.length;
 
   document.getElementById('app-main').innerHTML = `
-    <div class="page-bar">
-      <div class="page-title-block">
-        <div class="page-title">Banco de <em>músicas</em></div>
-        <div class="page-sub">${counts.length} cifras na biblioteca · ${favCount} favoritas</div>
+    <div class="bento-card page-header">
+      <div>
+        <div class="page-title">Músicas</div>
+        <div class="page-sub">${counts.length} música${counts.length!==1?'s':''} na biblioteca</div>
       </div>
       <div class="page-actions">
-        <button class="btn btn-ghost btn-sm" onclick="openImport()">✦ Importar via link</button>
-        <button class="btn btn-ghost btn-sm" onclick="openImportLote()">Importar em lote</button>
-        <button class="btn btn-ghost btn-sm" onclick="openBackup()">Backup</button>
-        <button class="btn btn-primary" onclick="openAddManual()">+ Nova música</button>
+        <button class="btn btn-ghost" onclick="openBackup()" title="Backup">💾</button>
+        <button class="btn btn-ghost" onclick="openImport()">🔗 Importar Link</button>
+        <button class="btn btn-ghost" onclick="openImportLote()">📋 Importar em Lote</button>
+        <button class="btn btn-primary" onclick="openAddManual()">+ Adicionar</button>
       </div>
     </div>
 
-    <div class="page-body">
-      <div class="searchrow">
-        <div class="search">
-          <span class="search-ico">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          </span>
-          <input placeholder="Buscar por título, artista ou tom…" value="${mFilter}" oninput="onSearchInput(this.value)" id="search-input"/>
-        </div>
+    <div class="bento-card search-bento">
+      <div class="search-wrap">
+        <span class="search-ico">🔍</span>
+        <input placeholder="Buscar por título ou artista..." value="${mFilter}"
+          oninput="onSearchInput(this.value)"
+          id="search-input">
       </div>
-
-      <div class="chiprow">
-        <button class="chip ${noFilter?'on':''}" onclick="mFavOnly=false;mTagFilter='';renderMusicas()">Todas <span class="chip-count">${counts.length}</span></button>
-        <button class="chip ${mFavOnly?'on':''}" onclick="mFavOnly=!mFavOnly;mTagFilter='';renderMusicas()">★ Favoritas <span class="chip-count">${favCount}</span></button>
-        ${allTags.length ? `<span style="width:1px;height:16px;background:var(--line);margin:0 4px;display:inline-block"></span>` : ''}
-        ${allTags.map(t => {
-          const n = counts.filter(m=>(m.tags||[]).includes(t)).length;
-          return `<button class="chip ${mTagFilter===t?'on':''}" onclick="mTagFilter=mTagFilter==='${t}'?'':'${t}';mFavOnly=false;renderMusicas()">${t} <span class="chip-count">${n}</span></button>`;
-        }).join('')}
+      <div class="filter-row">
+        <button class="btn btn-xs ${mFavOnly?'btn-gold':'btn-ghost'}" onclick="mFavOnly=!mFavOnly;renderMusicas()">⭐ Favoritas</button>
+        <select class="filter-sel" onchange="mTomFilter=this.value;renderMusicas()">
+          <option value="">Todos os tons</option>
+          ${[...new Set(counts.map(m=>m.tom))].sort().map(t=>`<option value="${t}" ${mTomFilter===t?'selected':''}>${t}</option>`).join('')}
+        </select>
+        ${allTags.length ? `<select class="filter-sel" onchange="mTagFilter=this.value;renderMusicas()">
+          <option value="">Todos os estilos</option>
+          ${allTags.map(t=>`<option value="${t}" ${mTagFilter===t?'selected':''}>${t}</option>`).join('')}
+        </select>` : ''}
+        ${(mFavOnly||mTomFilter||mTagFilter) ? `<button class="btn btn-xs btn-ghost" onclick="mFavOnly=false;mTomFilter='';mTagFilter='';renderMusicas()">✕ Limpar filtros</button>` : ''}
       </div>
+    </div>
 
-      <div class="songlist">
-        <div class="songlist-head">
-          <div></div>
-          <div>Título · Artista</div>
-          <div>Estilos</div>
-          <div>Tom</div>
-          <div>BPM · Duração</div>
-          <div></div>
-        </div>
-        ${allMusicas.map(m => `
-          <div class="songrow" onclick="openEdit('${m.id}')">
-            <button class="song-fav ${m.favorito?'on':''}" onclick="event.stopPropagation();toggleFav('${m.id}',${!!m.favorito})">
-              ${m.favorito ? '★' : '☆'}
-            </button>
-            <div>
-              <div class="song-title">${m.titulo}</div>
-              <div class="song-artist">${m.artista}</div>
+    ${allMusicas.length===0 ? `
+      <div class="empty">
+        <div class="empty-ico">🎵</div>
+        <h3>${(mFilter||mFavOnly||mTomFilter||mTagFilter) ? 'Nada encontrado' : 'Biblioteca vazia'}</h3>
+        <p>${(mFilter||mFavOnly||mTomFilter||mTagFilter) ? 'Tente outros filtros.' : 'Adicione uma nova cifra via link ou comece do zero.'}</p>
+        ${!(mFilter||mFavOnly||mTomFilter||mTagFilter) ? `<button class="btn btn-primary" onclick="openImport()">🔗 Importar via Link</button>` : ''}
+      </div>
+    ` : `
+      <div class="bento-grid">
+        ${allMusicas.map(m=>`
+          <div class="bento-card item-card" onclick="openEdit('${m.id}')">
+            <div class="ic-header">
+              <div style="flex:1;min-width:0">
+                <div class="ic-title">${m.favorito ? '⭐ ' : ''}${m.titulo}</div>
+                <div class="ic-subtitle">${m.artista}${m.bpm ? ` · ${m.bpm} BPM` : ''}${m.duracao_min ? ` · ${m.duracao_min}min` : ''}</div>
+              </div>
             </div>
-            <div class="song-tags">
-              ${(m.tags||[]).map(t=>`<span class="song-tag">${t}</span>`).join('')}
+            <div class="ic-tags">
+              <span class="tag">${m.tom}</span>
+              ${m.tom !== m.tom_original ? `<span class="tag danger">orig: ${m.tom_original}</span>` : ''}
+              ${(m.tags||[]).map(t=>`<span class="tag tag-style">${t}</span>`).join('')}
+              ${m.url_origem ? `<span class="tag" style="background:rgba(41,128,185,.15);border-color:rgba(41,128,185,.3);color:#7fb3d5">🔗</span>` : ''}
             </div>
-            <div class="song-tom">${m.tom}</div>
-            <div class="song-meta">
-              ${m.bpm ? `<span class="bpm">${m.bpm} bpm</span>` : ''}
-              ${m.duracao_min ? `<span class="dur">${m.duracao_min}min</span>` : ''}
-            </div>
-            <div class="song-action">
-              <button class="song-play" onclick="event.stopPropagation();openApresentacao('${m.id}')">▶</button>
+            <div class="ic-actions" onclick="event.stopPropagation()">
+              <button class="btn btn-ghost btn-sm" onclick="openApresentacao('${m.id}')">▶ Apresentar</button>
+              <button class="btn btn-ghost btn-sm" onclick="openEdit('${m.id}')">✏️ Editar</button>
+              <button class="btn btn-ghost btn-danger btn-sm btn-icon-only" onclick="delMusica('${m.id}','${m.titulo.replace(/'/g,"\\'")}')">🗑️</button>
             </div>
           </div>
         `).join('')}
-        ${allMusicas.length===0 ? `
-          <div class="empty">
-            <h3>${(mFilter||mFavOnly||mTagFilter) ? 'Nenhuma música encontrada' : 'Biblioteca vazia'}</h3>
-            <p>${(mFilter||mFavOnly||mTagFilter) ? 'Tente outros termos ou limpe os filtros.' : 'Adicione cifras via link ou comece do zero.'}</p>
-            ${!(mFilter||mFavOnly||mTagFilter) ? `<button class="btn btn-primary" onclick="openImport()">✦ Importar via link</button>` : ''}
-          </div>
-        ` : ''}
       </div>
-    </div>`;
-}
-
-async function toggleFav(id, current) {
-  try {
-    await api.put(`/api/musicas/${id}`, { favorito: !current });
-    await renderMusicas();
-  } catch(e) { toast('Erro ao alterar favorito', 'err'); }
+    `}`;
 }
 
 // ── Importar via link ──────────────────────────────────────────────────
@@ -374,7 +357,7 @@ async function doImport(substituir = false) {
   const msg = document.getElementById('imp-msg');
   btn.disabled = true;
   btn.innerHTML = '<span class="spin spin-sm"></span> Importando...';
-  msg.innerHTML = '<span style="color:var(--accent)">Consultando Inteligência Artificial... Isso pode levar alguns segundos.</span>';
+  msg.innerHTML = '<span style="color:var(--gold)">Consultando Inteligência Artificial... Isso pode levar alguns segundos.</span>';
   try {
     const r = await api.post('/api/musicas/importar', {url, substituir});
     if(r.erro) throw new Error(r.erro);
@@ -383,7 +366,7 @@ async function doImport(substituir = false) {
       btn.innerHTML = 'Importar';
       msg.innerHTML = `
         <div style="background:rgba(212,168,83,.1);border:1px solid rgba(212,168,83,.3);border-radius:8px;padding:10px 14px;font-size:13px;">
-          <strong style="color:var(--accent)">⚠️ Música já existe na biblioteca:</strong><br>
+          <strong style="color:var(--gold)">⚠️ Música já existe na biblioteca:</strong><br>
           <span style="color:var(--text)">"${r.titulo}" — ${r.artista}</span><br>
           <div style="margin-top:8px;display:flex;gap:8px;">
             <button class="btn btn-ghost btn-sm" onclick="closeModal()">Cancelar</button>
@@ -423,7 +406,7 @@ function openImportLote() {
       <input type="checkbox" id="lote-substituir" style="width:16px;height:16px;cursor:pointer;">
       Substituir músicas já importadas
     </label>
-    <div id="lote-progress" style="display:none;max-height:220px;overflow-y:auto;margin-bottom:10px;border:1px solid var(--line);border-radius:8px;padding:4px 8px;"></div>
+    <div id="lote-progress" style="display:none;max-height:220px;overflow-y:auto;margin-bottom:10px;border:1px solid var(--card-border);border-radius:8px;padding:4px 8px;"></div>
     <div class="modal-footer">
       <button class="btn btn-ghost" id="btn-lote-cancel" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-primary" id="btn-lote-imp" onclick="doImportLote()">Importar Todas</button>
@@ -448,7 +431,7 @@ async function doImportLote() {
   document.getElementById('lote-substituir').disabled = true;
   progress.style.display = 'block';
   progress.innerHTML = urls.map((url, i) => `
-    <div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--line);font-size:13px;">
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--card-border);font-size:13px;">
       <span id="lote-icon-${i}" style="width:18px;text-align:center;flex-shrink:0;">⏳</span>
       <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)" title="${url}">${url}</span>
       <span id="lote-status-${i}" style="color:var(--text-dim);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;" title="">Aguardando...</span>
@@ -460,7 +443,7 @@ async function doImportLote() {
     const icon = document.getElementById(`lote-icon-${i}`);
     const status = document.getElementById(`lote-status-${i}`);
     icon.innerHTML = '<span class="spin spin-sm"></span>';
-    status.style.color = 'var(--accent)';
+    status.style.color = 'var(--gold)';
     status.textContent = 'Importando...';
     try {
       const r = await api.post('/api/musicas/importar', {url: urls[i], substituir});
@@ -704,14 +687,11 @@ function renderTagsEditor() {
 
 async function doSave() {
   collectEdits();
-  const tabelaSecoesCount = (editM.tabela||[]).length;
   try {
     const r = await api.put(`/api/musicas/${editM.id}`, editM);
     if (r.erro) throw new Error(r.erro);
     closeModal();
-    let msg = r.offline ? '💾 Salvo localmente — será sincronizado quando conectar' : '✅ Salvo!';
-    if (editTab === 'tabela' && tabelaSecoesCount > 0) msg += ` Grade: ${tabelaSecoesCount} seção(ões)`;
-    toast(msg);
+    toast(r.offline ? '💾 Salvo localmente — será sincronizado quando conectar' : '✅ Salvo com sucesso!');
     renderMusicas();
   } catch(e) {
     toast('❌ Erro ao salvar: ' + e.message, 'err');
@@ -774,8 +754,7 @@ function parseTabela(text) {
     if(t.startsWith('##')) {
       if(cur) secoes.push(cur);
       cur = {nome_secao: t.replace(/^##\s*/,''), grid: []};
-    } else {
-      if(!cur) cur = {nome_secao: 'Principal', grid: []};
+    } else if(cur) {
       const cells = t.split('|').map(c=>c.trim()).filter(Boolean);
       if(cells.length) cur.grid.push(cells);
     }
@@ -901,47 +880,30 @@ async function openApresentacao(id) {
   const scrollSpeed = Math.max(0.3, Math.min(3, bpm / 80));
 
   const html = linhas.map(l => {
-    if(l.tipo==='secao')  return `<div class="ap-secao-l">${l.texto}</div>`;
-    if(l.tipo==='acorde') return `<div class="ap-acorde-l">${l.texto}</div>`;
-    return `<div class="ap-letra-l">${l.texto}</div>`;
+    if(l.tipo==='secao')  return `<div class="ap-secao">${l.texto}</div>`;
+    if(l.tipo==='acorde') return `<div class="ap-acorde">${l.texto}</div>`;
+    return `<div class="ap-letra">${l.texto}</div>`;
   }).join('');
-
-  _apBpm = bpm;
 
   document.body.insertAdjacentHTML('beforeend', `
     <div class="ap-overlay" id="ap-root">
-      <div class="ap-bar">
-        <button class="ap-back" onclick="closeApresentacao()">✕</button>
-        <div class="ap-titles">
-          <div class="ap-title">${m.titulo}</div>
-          <div class="ap-artist">${m.artista}</div>
-        </div>
-        <div class="ap-tom-large">${m.tom}</div>
-        <div class="ap-controls">
-          <div class="ap-speed">
-            <span>vel.</span>
-            <input type="range" min="0.3" max="3.5" step="0.1" value="${scrollSpeed.toFixed(1)}" id="ap-speed" oninput="setScrollSpeed(this.value)">
-            <span id="ap-speed-val">${scrollSpeed.toFixed(1)}×</span>
-          </div>
-          <button class="ap-btn" id="ap-metro-btn" onclick="toggleMetronomo()" title="Metrônomo">🥁</button>
-          <button class="ap-btn" id="ap-scroll-btn" onclick="toggleAutoScroll()" title="Auto-scroll (espaço)">▶</button>
-        </div>
-      </div>
-      <div class="ap-stage" id="ap-body">
-        <div class="ap-content">${html || '<div style="color:var(--text-faint);padding:60px;text-align:center;font-family:var(--font-m)">Nenhuma cifra cadastrada</div>'}</div>
-      </div>
-      <div class="metro" id="ap-metro" style="display:none">
-        <div class="metro-beats">
-          <div class="metro-dot first" id="mb-0"></div>
-          <div class="metro-dot" id="mb-1"></div>
-          <div class="metro-dot" id="mb-2"></div>
-          <div class="metro-dot" id="mb-3"></div>
-        </div>
+      <div class="ap-header">
         <div>
-          <div class="metro-bpm" id="ap-metro-info">${bpm}</div>
-          <div class="metro-bpm-sub">bpm</div>
+          <div class="ap-titulo">${m.titulo}</div>
+          <div class="ap-artista">${m.artista} · Tom: ${m.tom}${m.bpm?' · '+m.bpm+' BPM':''}</div>
         </div>
-        <button class="metro-toggle off" id="ap-metro-toggle" onclick="toggleMetronomo()">▶</button>
+        <div class="ap-controls">
+          <button class="ap-btn" id="ap-metro-btn" onclick="toggleMetronomo()" title="Metrônomo">🥁</button>
+          <button class="ap-btn" id="ap-scroll-btn" onclick="toggleAutoScroll()" title="Auto-scroll">▶</button>
+          <span class="ap-speed-label">Velocidade:</span>
+          <input type="range" min="0.2" max="4" step="0.1" value="${scrollSpeed.toFixed(1)}" id="ap-speed" oninput="setScrollSpeed(this.value)" style="width:80px">
+          <button class="ap-btn" onclick="closeApresentacao()">✕</button>
+        </div>
+      </div>
+      <div class="ap-body" id="ap-body">${html || '<div style="color:#888;padding:40px;text-align:center">Nenhuma cifra cadastrada</div>'}</div>
+      <div class="ap-metro" id="ap-metro" style="display:none">
+        <div id="ap-metro-beat" class="metro-beat"></div>
+        <div style="font-size:13px;color:#aaa;margin-top:8px" id="ap-metro-info">${bpm} BPM</div>
       </div>
     </div>`);
 
@@ -953,69 +915,60 @@ let _apScrollActive   = false;
 let _apScrollSpeed    = 1;
 let _apMetroInterval  = null;
 let _apMetroActive    = false;
-let _apBpm            = 80;
-let _apBeat           = 0;
 
 function toggleAutoScroll() {
   _apScrollActive = !_apScrollActive;
   const btn = document.getElementById('ap-scroll-btn');
-  if (_apScrollActive) {
-    btn.textContent = '⏸'; btn.classList.add('on');
+  if(_apScrollActive) {
+    btn.textContent = '⏸'; btn.style.color = 'var(--gold)';
     _apScrollInterval = setInterval(() => {
       const body = document.getElementById('ap-body');
-      if (body) body.scrollTop += _apScrollSpeed;
+      if(body) body.scrollTop += _apScrollSpeed;
     }, 30);
   } else {
-    btn.textContent = '▶'; btn.classList.remove('on');
+    btn.textContent = '▶'; btn.style.color = '';
     clearInterval(_apScrollInterval);
   }
 }
 
 function setScrollSpeed(v) {
   _apScrollSpeed = parseFloat(v);
-  const lbl = document.getElementById('ap-speed-val');
-  if (lbl) lbl.textContent = parseFloat(v).toFixed(1) + '×';
 }
 
 function toggleMetronomo() {
   _apMetroActive = !_apMetroActive;
-  const btn    = document.getElementById('ap-metro-btn');
-  const toggle = document.getElementById('ap-metro-toggle');
-  const panel  = document.getElementById('ap-metro');
-  if (_apMetroActive) {
-    if (btn) btn.classList.add('on');
-    if (panel) panel.style.display = 'flex';
-    if (toggle) { toggle.textContent = '⏸'; toggle.className = 'metro-toggle'; }
+  const btn   = document.getElementById('ap-metro-btn');
+  const panel = document.getElementById('ap-metro');
+  if(_apMetroActive) {
+    btn.style.color = 'var(--gold)';
+    panel.style.display = 'flex';
     _startMetronomo();
   } else {
-    if (btn) btn.classList.remove('on');
-    if (panel) panel.style.display = 'none';
-    if (toggle) { toggle.textContent = '▶'; toggle.className = 'metro-toggle off'; }
+    btn.style.color = '';
+    panel.style.display = 'none';
     clearInterval(_apMetroInterval);
   }
 }
 
 function _startMetronomo() {
-  const ms = Math.round(60000 / _apBpm);
-  _apBeat = 0;
+  const speedInput = document.getElementById('ap-speed');
+  const infoEl = document.getElementById('ap-metro-info');
+  const beat = document.getElementById('ap-metro-beat');
+  const bpmInput = document.getElementById('ap-bpm-input');
+  const bpm = bpmInput ? parseInt(bpmInput.value)||80 : 80;
+  const ms = Math.round(60000 / bpm);
+  if(infoEl) infoEl.textContent = bpm + ' BPM';
   clearInterval(_apMetroInterval);
   _apMetroInterval = setInterval(() => {
-    for (let i = 0; i < 4; i++) {
-      const d = document.getElementById('mb-' + i);
-      if (d) d.classList.remove('on');
-    }
-    const dot = document.getElementById('mb-' + _apBeat);
-    if (dot) dot.classList.add('on');
+    if(beat) { beat.classList.add('pulse'); setTimeout(()=>beat.classList.remove('pulse'), 100); }
     try {
       const ctx = new (window.AudioContext||window.webkitAudioContext)();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain); gain.connect(ctx.destination);
-      osc.frequency.value = _apBeat === 0 ? 1000 : 800;
-      gain.gain.value = 0.18;
-      osc.start(); osc.stop(ctx.currentTime + 0.04);
+      osc.frequency.value = 880; gain.gain.value = 0.3;
+      osc.start(); osc.stop(ctx.currentTime + 0.05);
     } catch(e) {}
-    _apBeat = (_apBeat + 1) % 4;
   }, ms);
 }
 
@@ -1039,76 +992,63 @@ async function renderStats() {
   const horas = Math.floor(stats.duracao_total_min/60);
   const mins  = Math.round(stats.duracao_total_min % 60);
   const durStr = stats.duracao_total_min > 0 ? (horas > 0 ? `${horas}h ${mins}min` : `${mins}min`) : '—';
-  const favPct = stats.total_musicas > 0 ? Math.round(stats.total_favoritas/stats.total_musicas*100) : 0;
-  const maxArt = stats.top_artistas[0]?.n || 1;
-  const maxTom = stats.por_tom[0]?.n || 1;
 
   document.getElementById('app-main').innerHTML = `
-    <div class="page-bar">
-      <div class="page-title-block">
-        <div class="page-title">Estatísticas <em>da biblioteca</em></div>
-        <div class="page-sub">Visão geral do acervo, artistas, tons e estilos</div>
+    <div class="bento-card page-header">
+      <div>
+        <div class="page-title">Estatísticas</div>
+        <div class="page-sub">Visão geral da sua biblioteca</div>
       </div>
     </div>
 
-    <div class="page-body">
-      <div class="stats-grid">
-        <div class="card stat-tile">
-          <div class="stat-tile-label">Músicas</div>
-          <div class="stat-tile-num">${stats.total_musicas}</div>
-          <div class="stat-tile-sub">cifras catalogadas</div>
-        </div>
-        <div class="card stat-tile">
-          <div class="stat-tile-label">Favoritas</div>
-          <div class="stat-tile-num" style="color:var(--accent)">${stats.total_favoritas}</div>
-          <div class="stat-tile-sub">${favPct}% do acervo</div>
-        </div>
-        <div class="card stat-tile">
-          <div class="stat-tile-label">Repertórios</div>
-          <div class="stat-tile-num">${stats.total_repertorios}</div>
-          <div class="stat-tile-sub">prontos para o palco</div>
-        </div>
-        <div class="card stat-tile">
-          <div class="stat-tile-label">Duração total</div>
-          <div class="stat-tile-num">${durStr}</div>
-          <div class="stat-tile-sub">somando todo o acervo</div>
-        </div>
+    <div class="stats-grid">
+      <div class="bento-card stat-card">
+        <div class="stat-num">${stats.total_musicas}</div>
+        <div class="stat-label">Músicas</div>
       </div>
-
-      <div class="stats-cols">
-        <div class="card">
-          <div class="card-h"><div class="card-title">Artistas mais cadastrados</div></div>
-          ${stats.top_artistas.map(a=>`
-            <div class="bar-row">
-              <div class="bar-label">${a.artista}</div>
-              <div class="bar-track"><div class="bar-fill" style="width:${Math.round(a.n/maxArt*100)}%"></div></div>
-              <div class="bar-val">${a.n}</div>
-            </div>`).join('') || '<div style="color:var(--text-dim);font-size:13px">Nenhum dado ainda</div>'}
-        </div>
-        <div class="card">
-          <div class="card-h"><div class="card-title">Distribuição por tom</div></div>
-          <div class="tons-grid">
-            ${stats.por_tom.map(t=>`
-              <div class="tom-cell" style="background:color-mix(in oklab, var(--accent) ${Math.round(t.n/maxTom*15)}%, transparent)">
-                <div class="t">${t.tom}</div>
-                <div class="n">${t.n}</div>
-              </div>`).join('') || '<div style="color:var(--text-dim);font-size:13px">Nenhum dado ainda</div>'}
-          </div>
-        </div>
+      <div class="bento-card stat-card">
+        <div class="stat-num">${stats.total_favoritas}</div>
+        <div class="stat-label">Favoritas ⭐</div>
       </div>
+      <div class="bento-card stat-card">
+        <div class="stat-num">${stats.total_repertorios}</div>
+        <div class="stat-label">Repertórios</div>
+      </div>
+      <div class="bento-card stat-card">
+        <div class="stat-num">${durStr}</div>
+        <div class="stat-label">Duração total</div>
+      </div>
+    </div>
 
-      ${stats.top_tags.length ? `
-        <div class="card">
-          <div class="card-h"><div class="card-title">Nuvem de estilos</div></div>
-          <div class="tagcloud">
-            ${stats.top_tags.map(t=>`
-              <span class="tag-cloud-item" style="font-size:${12 + t.n * 1.4}px">
-                ${t.tag}<span class="n">${t.n}</span>
-              </span>`).join('')}
-          </div>
-        </div>
-      ` : ''}
-    </div>`;
+    <div class="stats-row">
+      <div class="bento-card" style="flex:1">
+        <div class="col-title">Top Artistas</div>
+        ${stats.top_artistas.map(a=>`
+          <div class="stat-bar-row">
+            <span class="stat-bar-label">${a.artista}</span>
+            <div class="stat-bar-wrap"><div class="stat-bar" style="width:${Math.round(a.n/stats.top_artistas[0].n*100)}%"></div></div>
+            <span class="stat-bar-val">${a.n}</span>
+          </div>`).join('') || '<div style="color:var(--text-dim);font-size:13px">Nenhum dado ainda</div>'}
+      </div>
+      <div class="bento-card" style="flex:1">
+        <div class="col-title">Por Tom</div>
+        ${stats.por_tom.map(t=>`
+          <div class="stat-bar-row">
+            <span class="stat-bar-label" style="color:var(--gold);font-family:var(--font-m)">${t.tom}</span>
+            <div class="stat-bar-wrap"><div class="stat-bar" style="width:${Math.round(t.n/stats.por_tom[0].n*100)}%;background:rgba(212,168,83,.5)"></div></div>
+            <span class="stat-bar-val">${t.n}</span>
+          </div>`).join('') || '<div style="color:var(--text-dim);font-size:13px">Nenhum dado ainda</div>'}
+      </div>
+    </div>
+
+    ${stats.top_tags.length ? `
+    <div class="bento-card">
+      <div class="col-title">Estilos na Biblioteca</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;padding-top:4px">
+        ${stats.top_tags.map(t=>`<span class="tag tag-style" style="font-size:14px;padding:6px 14px">${t.tag} <span style="color:var(--text-dim);font-size:11px">(${t.n})</span></span>`).join('')}
+      </div>
+    </div>` : ''}
+  `;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1118,72 +1058,56 @@ let allReps = [];
 
 async function renderRepertorios() {
   allReps = await api.get('/api/repertorios');
-
-  // Update sidebar count
-  const nc = document.getElementById('nav-count-reps');
-  if (nc) nc.textContent = allReps.length;
-
   document.getElementById('app-main').innerHTML = `
-    <div class="page-bar">
-      <div class="page-title-block">
-        <div class="page-title">Repertórios <em>do palco</em></div>
-        <div class="page-sub">${allReps.length} repertório${allReps.length!==1?'s':''} · QR & PDF integrados</div>
+    <div class="bento-card page-header">
+      <div>
+        <div class="page-title">Repertórios</div>
+        <div class="page-sub">${allReps.length} repertório${allReps.length!==1?'s':''} criado${allReps.length!==1?'s':''}</div>
       </div>
-      <div class="page-actions">
-        <button class="btn btn-ghost btn-sm" onclick="openBackup()">Backup</button>
-        <button class="btn btn-primary" onclick="openNovoRep()">+ Novo repertório</button>
-      </div>
+      <button class="btn btn-primary" onclick="openNovoRep()">+ Novo Repertório</button>
     </div>
 
-    <div class="page-body">
-      ${allReps.length===0 ? `
-        <div class="empty">
-          <h3>Nenhuma lista criada</h3>
-          <p>Crie um repertório e organize as músicas para o próximo show.</p>
-          <button class="btn btn-primary" onclick="openNovoRep()">+ Criar repertório</button>
-        </div>
-      ` : `
-        <div class="repgrid">
-          ${allReps.map(r => {
-            const songs = r.musicas||[];
-            const durTotal = songs.reduce((acc,s)=>acc+(s.duracao_min||0),0);
-            const min = Math.floor(durTotal);
-            const durStr = durTotal > 0 ? (min >= 60 ? `${Math.floor(min/60)}h ${min%60}min` : `${min}min`) : '';
-            const nomeEsc = r.nome.replace(/'/g,"\\'");
-            return `
-              <div class="rep-card" onclick="openEditRep('${r.id}')">
-                <div class="rep-card-bar"></div>
+    ${allReps.length===0 ? `
+      <div class="empty">
+        <div class="empty-ico">📋</div>
+        <h3>Nenhuma lista criada</h3>
+        <p>Crie um repertório e organize quais músicas você irá tocar no próximo evento.</p>
+        <button class="btn btn-primary" onclick="openNovoRep()">+ Criar Repertório</button>
+      </div>
+    ` : `
+      <div class="bento-grid-large">
+        ${allReps.map(r => {
+          const songs = r.musicas||[];
+          const durTotal = songs.reduce((acc,s)=>acc+(s.duracao_min||0),0);
+          const durStr = durTotal > 0 ? (durTotal>=60 ? `${Math.floor(durTotal/60)}h${Math.round(durTotal%60)}min` : `~${Math.round(durTotal)}min`) : '';
+          return `
+            <div class="bento-card item-card">
+              <div class="ic-header">
                 <div>
-                  <div class="rep-name">${r.nome}</div>
-                  <div class="rep-desc">${songs.length} música${songs.length!==1?'s':''}${durStr?' · '+durStr:''}</div>
+                  <div class="ic-title">${r.nome}</div>
+                  <div class="ic-subtitle">${songs.length} música${songs.length!==1?'s':''}${durStr?' · '+durStr:''}</div>
                 </div>
-                <div class="rep-songs-mini">
-                  ${songs.slice(0,5).map((s,i)=>`
-                    <div class="rep-song-mini">
-                      <span class="num">${String(i+1).padStart(2,'0')}</span>
-                      <span class="nm">${s.titulo}</span>
-                      <span class="tm">${s.tom||''}</span>
-                    </div>
-                  `).join('')}
-                  ${songs.length>5 ? `<div class="rep-song-mini"><span class="num">···</span><span class="nm" style="color:var(--text-faint)">+ ${songs.length-5} músicas</span></div>` : ''}
-                  ${songs.length===0 ? `<div style="color:var(--text-faint);font-size:12px;padding:8px 10px">Setlist vazio — adicione músicas</div>` : ''}
+                <div style="display:flex;gap:4px">
+                  <button class="btn btn-ghost btn-sm btn-icon-only" onclick="openQRCode('${r.id}','${r.nome.replace(/'/g,"\\'")}')">QR</button>
+                  <button class="btn btn-ghost btn-sm btn-icon-only" onclick="openEditRep('${r.id}')" title="Gerenciar">✏️</button>
+                  <button class="btn btn-ghost btn-danger btn-sm btn-icon-only" onclick="delRep('${r.id}','${r.nome.replace(/'/g,"\\'")}')">🗑️</button>
                 </div>
-                <div class="rep-foot">
-                  <div class="rep-stats">
-                    <span><b>${songs.length}</b> músicas</span>
-                    ${durStr ? `<span><b>${durStr}</b></span>` : ''}
-                  </div>
-                  <div style="display:flex;gap:6px" onclick="event.stopPropagation()">
-                    <button class="btn btn-quiet btn-sm" onclick="openQRCode('${r.id}','${nomeEsc}')">QR</button>
-                    <button class="btn btn-quiet btn-sm" onclick="gerarPDF('${r.id}','${nomeEsc}')">PDF</button>
-                    <button class="btn btn-ghost btn-sm" onclick="openEditRep('${r.id}')">▶ Palco</button>
-                  </div>
-                </div>
-              </div>`;
-          }).join('')}
-        </div>
-      `}
-    </div>`;
+              </div>
+              <div class="rep-list-preview">
+                ${songs.slice(0,5).map((s,i)=>`
+                  <div class="rep-song-row"><span class="num">${String(i+1).padStart(2,'0')}.</span><span class="name">${s.titulo}</span><span class="artist">— ${s.artista}</span></div>
+                `).join('')}
+                ${songs.length>5 ? `<div style="font-size:12px;color:var(--gold);text-align:center;padding:4px 0;">+ ${songs.length-5} a mais…</div>` : ''}
+                ${songs.length===0 ? `<div style="color:var(--text-dim);font-size:13px;padding:24px 0;text-align:center;background:rgba(0,0,0,0.2);border-radius:12px">Adicione músicas aqui</div>` : ''}
+              </div>
+              <div class="ic-actions">
+                <button class="btn btn-ghost btn-sm" onclick="openEditRep('${r.id}')" style="flex:1">Ajustar Setup</button>
+                <button class="btn btn-green btn-sm" onclick="gerarPDF('${r.id}','${r.nome.replace(/'/g,"\\'")}')" style="flex:1">📄 PDF</button>
+              </div>
+            </div>`;
+        }).join('')}
+      </div>
+    `}`;
 }
 
 function openNovoRep() {
@@ -1245,7 +1169,7 @@ async function openEditRep(id) {
 
     <div class="two-col">
       <!-- Músicas selecionadas -->
-      <div style="background:rgba(255,255,255,0.02);border:1px solid var(--line);border-radius:var(--radius-sm);padding:16px">
+      <div class="bento-card" style="padding:16px; background:rgba(0,0,0,0.15)">
         <div class="col-title">
           <span>Setlist Atual (${(editRep.musicas||[]).length})</span>
         </div>
@@ -1259,14 +1183,14 @@ async function openEditRep(id) {
                 <div class="di-title">${m.titulo}</div>
                 <div class="di-artist">${m.artista} · <span>${m.tom}</span></div>
               </div>
-              <button class="btn btn-quiet btn-xs btn-icon-only" onclick="removerDaLista('${m.id}')" title="Remover da lista">✕</button>
+              <button class="btn btn-ghost btn-danger btn-xs btn-icon-only" onclick="removerDaLista('${m.id}')" title="Remover da lista">✕</button>
             </div>
-          `).join('') || '<div style="color:var(--text-faint);font-size:13px;text-align:center;padding:40px 0;border:1px dashed var(--line);border-radius:var(--radius-xs)">Setlist vazio. Adicione músicas →</div>'}
+          `).join('') || '<div style="color:var(--text-dim);font-size:13px;text-align:center;padding:40px 0; border:1px dashed var(--card-border); border-radius:12px;">Setlist vazio. Adicione músicas à direita →</div>'}
         </div>
       </div>
 
       <!-- Disponíveis -->
-      <div style="background:rgba(255,255,255,0.02);border:1px solid var(--line);border-radius:var(--radius-sm);padding:16px">
+      <div class="bento-card" style="padding:16px; background:rgba(0,0,0,0.15)">
         <div class="col-title">Adicionar Novas (${disponiveis.length})</div>
         <input placeholder="Buscar na biblioteca..." style="margin-bottom:16px;" oninput="filtrarDisp(this.value)">
         <div class="avail-scroll" id="avail-list">
@@ -1283,7 +1207,7 @@ async function openEditRep(id) {
 }
 
 function renderDisponiveis(lista) {
-  if(!lista.length) return '<div style="color:var(--text-dim);font-size:13px;text-align:center;padding:40px 0; border:1px dashed var(--line); border-radius:12px;">Busca não encontrada</div>';
+  if(!lista.length) return '<div style="color:var(--text-dim);font-size:13px;text-align:center;padding:40px 0; border:1px dashed var(--card-border); border-radius:12px;">Busca não encontrada</div>';
   return lista.map(m=>`
     <div class="avail-item" onclick="adicionarNaLista('${m.id}')">
       <div class="di-info" style="flex:1">
@@ -1432,7 +1356,7 @@ function openQRCode(rid, nome) {
     </div>
     <div style="text-align:center;padding:20px">
       <div style="font-size:13px;color:var(--text-dim);margin-bottom:16px">Escaneie para ver a lista de músicas</div>
-      <img src="/api/repertorios/${rid}/qrcode" alt="QR Code" style="width:220px;height:220px;border-radius:12px;border:4px solid var(--line)">
+      <img src="/api/repertorios/${rid}/qrcode" alt="QR Code" style="width:220px;height:220px;border-radius:12px;border:4px solid var(--card-border)">
       <div style="margin-top:16px">
         <a href="/api/repertorios/${rid}/qrcode" download="${nome.replace(/\s+/g,'_')}_qr.png" class="btn btn-ghost btn-sm">⬇️ Baixar PNG</a>
       </div>

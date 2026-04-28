@@ -1,41 +1,74 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-layout="sidebar" data-bg="midnight" data-density="cozy" data-cards="glass">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Repertório Sol Maior</title>
 <link rel="manifest" href="/static/manifest.json">
 <meta name="theme-color" content="#d4a853">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,700&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="/static/style.css"/>
 </head>
 <body>
 
 <!-- Banner offline -->
 <div id="offline-banner" style="display:none">
-  <span>📡 Você está offline — exibindo dados do cache local</span>
+  <span>Você está offline — exibindo dados do cache local</span>
   <span id="pending-badge" style="display:none"></span>
 </div>
 
-<div class="bento-container">
-  <!-- Navbar Top -->
-  <header class="bento-header bento-card">
-    <div class="logo">
-      <div class="logo-title">Repertório Sol Maior</div>
-      <div class="logo-sub">Sistema de Cifras 🎸</div>
+<div class="app-shell">
+
+  <!-- SIDEBAR -->
+  <aside class="side">
+    <div class="brand">
+      <div class="brand-mark">
+        <div class="brand-glyph"></div>
+        <div>
+          <div class="brand-name">Sol Maior</div>
+          <div class="brand-sub">Repertório</div>
+        </div>
+      </div>
     </div>
-    <nav class="nav">
-      <button class="nav-item active" onclick="page('musicas')" id="nav-musicas">🎵 Músicas</button>
-      <button class="nav-item" onclick="page('repertorios')" id="nav-repertorios">📋 Repertórios</button>
-      <button class="nav-item" onclick="page('stats')" id="nav-stats">📊 Estatísticas</button>
-      <div class="status-indicator" id="conn-indicator" title="Verificando conexão..."></div>
-    </nav>
-  </header>
+
+    <div class="side-section">
+      <div class="side-section-title">Biblioteca</div>
+      <button class="nav-item active" onclick="page('musicas')" id="nav-musicas">
+        <span class="nav-ico">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        </span>
+        <span>Músicas</span>
+        <span class="nav-count" id="nav-count-musicas"></span>
+      </button>
+      <button class="nav-item" onclick="page('repertorios')" id="nav-repertorios">
+        <span class="nav-ico">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
+        </span>
+        <span>Repertórios</span>
+        <span class="nav-count" id="nav-count-reps"></span>
+      </button>
+      <button class="nav-item" onclick="page('stats')" id="nav-stats">
+        <span class="nav-ico">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="14" width="3" height="4"/></svg>
+        </span>
+        <span>Estatísticas</span>
+      </button>
+    </div>
+
+    <div class="side-foot">
+      <div class="conn-row">
+        <span class="conn-dot" id="conn-dot"></span>
+        <span id="conn-text">Online · sincronizado</span>
+      </div>
+      <div class="side-foot-mini">PWA · Sol Maior</div>
+    </div>
+  </aside>
 
   <!-- MAIN -->
-  <main class="bento-main" id="app-main"></main>
+  <div class="main" id="app-main"></div>
+
 </div>
 
 <!-- Toast -->

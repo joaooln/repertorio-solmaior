@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Repertório Sol Maior</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="data.jsx"></script>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="screens.jsx"></script>
+<script type="text/babel" src="overlays.jsx"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accent": "copper",
+  "background": "midnight",
+  "density": "cozy",
+  "cards": "glass",
+  "layout": "topnav",
+  "displayFont": "sansonly"
+}/*EDITMODE-END*/;
+
+const ACCENT_PRESETS = {
+  gold:    { hex: '#d4a853', hex2: '#e5b966' },
+  copper:  { hex: '#d18a5d', hex2: '#e6a075' },
+  emerald: { hex: '#67c39a', hex2: '#8ad8b6' },
+  indigo:  { hex: '#9b8fe8', hex2: '#b4a8ff' },
+  bone:    { hex: '#e8ddc8', hex2: '#f5ecd8' },
+};
+
+const FONT_PRESETS = {
+  fraunces: { display: "'Fraunces', serif" },
+  ibmplex:  { display: "'IBM Plex Serif', serif" },
+  sansonly: { display: "'DM Sans', sans-serif" },
+};
+
+function App() {
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+
+  const [page, setPage] = useState('musicas');
+  const [musicas, setMusicas] = useState(SAMPLE_MUSICAS);
+  const [editing, setEditing] = useState(null);
+  const [presenting, setPresenting] = useState(null);
+  const [openRep, setOpenRep] = useState(null);
+  const [framed, setFramed] = useState(true);
+  const [toast, setToast] = useState(null);
+
+  // Apply tweaks to root
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.density = t.density;
+    root.dataset.layout = t.layout;
+    root.dataset.bg = t.background;
+    root.dataset.cards = t.cards;
+    const a = ACCENT_PRESETS[t.accent] || ACCENT_PRESETS.gold;
+    root.style.setProperty('--accent', a.hex);
+    root.style.setProperty('--accent-2', a.hex2);
+    const f = FONT_PRESETS[t.displayFont] || FONT_PRESETS.fraunces;
+    root.style.setProperty('--font-d', f.display);
+  }, [t]);
+
+  window.__nav = setPage;
+
+  function showToast(msg) {
+    setToast(msg);
+    setTimeout(() => setToast(null), 1800);
+  }
+
+  function togglefav(id) {
+    setMusicas(ms => ms.map(m => m.id === id ? { ...m, fav: !m.fav } : m));
+  }
+
+  const navs = [
+    { id: 'musicas',     label: 'Músicas',       ico: 'music',  count: musicas.length },
+    { id: 'repertorios', label: 'Repertórios',   ico: 'list',   count: SAMPLE_REPERTORIOS.length },
+    { id: 'stats',       label: 'Estatísticas',  ico: 'chart' },
+    { id: 'importar',    label: 'Importar',      ico: 'sparkle' },
+  ];
+
+  function NavList({ inline }) {
+    return navs.map(n => (
+      <button
+        key={n.id}
+        className={"nav-item "+(page===n.id?'active':'')}
+        onClick={()=>setPage(n.id)}
+      >
+        <span className="nav-ico"><Icon name={n.ico} size={15}/></span>
+        <span>{n.label}</span>
+        {n.count != null && !inline && <span className="nav-count">{n.count}</span>}
+      </button>
+    ));
+  }
+
+  return (
+    <>
+      <div className="app-shell">
+        {/* SIDEBAR */}
+        <aside className="side">
+          <div className="brand">
+            <div className="brand-mark">
+              <div className="brand-glyph"/>
+              <div>
+                <div className="brand-name">Sol Maior</div>
+                <div className="brand-sub" style={{ marginTop: 0 }}>Repertório</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="side-section">
+            <div className="side-section-title">Biblioteca</div>
+            <NavList/>
+          </div>
+
+          <div className="side-section">
+            <div className="side-section-title">Repertórios recentes</div>
+            {SAMPLE_REPERTORIOS.slice(0,3).map(r => (
+              <button key={r.id} className="nav-item" onClick={()=>{ setPage('repertorios'); setOpenRep(r); }}>
+                <span className="nav-ico" style={{ color: 'var(--accent)' }}>•</span>
+                <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{r.nome}</span>
+                <span className="nav-count">{r.songs.length}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="side-foot">
+            <div className="conn-row"><span className="conn-dot"/>Online · sincronizado</div>
+            <div className="side-foot-mini">PWA · v2.4 · cavaquinho</div>
+          </div>
+        </aside>
+
+        {/* MAIN */}
+        <div className="main">
+          {/* Topnav (only visible when layout=topnav) */}
+          <nav className="topnav">
+            <div className="brand-mark">
+              <div className="brand-glyph"/>
+              <div className="brand-name">Sol Maior</div>
+            </div>
+            <NavList inline/>
+            <div className="nav-spacer"/>
+            <div className="conn-row"><span className="conn-dot"/>Online</div>
+          </nav>
+
+          {page === 'musicas' && (
+            <MusicasScreen
+              musicas={musicas}
+              onOpen={s=>setEditing(s)}
+              onTogglefav={togglefav}
+              onPlay={s=>setPresenting(s)}
+            />
+          )}
+          {page === 'repertorios' && (
+            <RepertoriosScreen
+              repertorios={SAMPLE_REPERTORIOS}
+              musicas={musicas}
+              onOpen={r=>setOpenRep(r)}
+              onPlay={r=>setPresenting(musicas.find(m=>m.id===r.songs[0]))}
+            />
+          )}
+          {page === 'stats' && <StatsScreen stats={STATS}/>}
+          {page === 'importar' && <ImportarScreen/>}
+        </div>
+      </div>
+
+      {/* Editor overlay */}
+      {editing && !presenting && (
+        <EditorOverlay
+          song={editing}
+          onClose={()=>setEditing(null)}
+          onPlay={s=>setPresenting(s)}
+        />
+      )}
+
+      {/* Repertorio detail */}
+      {openRep && !presenting && (
+        <RepertorioDetailOverlay
+          rep={openRep}
+          musicas={musicas}
+          onClose={()=>setOpenRep(null)}
+          onPlay={s=>setPresenting(s)}
+        />
+      )}
+
+      {/* Modo Apresentação */}
+      {presenting && (
+        <ApresentacaoOverlay
+          song={presenting}
+          framed={framed}
+          onClose={()=>setPresenting(null)}
+        />
+      )}
+
+      {/* Toast */}
+      {toast && <div className="toast show">{toast}</div>}
+
+      {/* Tweaks */}
+      <TweaksPanel>
+        <TweakSection label="Visual"/>
+        <TweakRadio  label="Layout"
+          value={t.layout}
+          options={[{value:'sidebar', label:'Sidebar'}, {value:'topnav', label:'Top nav'}]}
+          onChange={v=>setTweak('layout', v)}/>
+        <TweakRadio  label="Cartões"
+          value={t.cards}
+          options={[{value:'glass', label:'Glass'}, {value:'flat', label:'Flat'}, {value:'outlined', label:'Linha'}]}
+          onChange={v=>setTweak('cards', v)}/>
+        <TweakRadio  label="Densidade"
+          value={t.density}
+          options={[{value:'compact', label:'Compacta'}, {value:'cozy', label:'Cozy'}, {value:'comfy', label:'Aerada'}]}
+          onChange={v=>setTweak('density', v)}/>
+
+        <TweakSection label="Cor & Tipografia"/>
+        <TweakSelect label="Acento"
+          value={t.accent}
+          options={[
+            {value:'gold', label:'Dourado (original)'},
+            {value:'copper', label:'Cobre quente'},
+            {value:'emerald', label:'Verde mata'},
+            {value:'indigo', label:'Indigo noturno'},
+            {value:'bone', label:'Marfim'},
+          ]}
+          onChange={v=>setTweak('accent', v)}/>
+        <TweakSelect label="Fundo"
+          value={t.background}
+          options={[
+            {value:'warm', label:'Quente (original)'},
+            {value:'cool', label:'Frio'},
+            {value:'midnight', label:'Meia-noite'},
+          ]}
+          onChange={v=>setTweak('background', v)}/>
+        <TweakSelect label="Display font"
+          value={t.displayFont}
+          options={[
+            {value:'fraunces', label:'Fraunces (serif)'},
+            {value:'ibmplex',  label:'IBM Plex Serif'},
+            {value:'sansonly', label:'Só DM Sans'},
+          ]}
+          onChange={v=>setTweak('displayFont', v)}/>
+
+        <TweakSection label="Modo Palco"/>
+        <TweakToggle label="Mostrar em moldura iPad"
+          value={framed}
+          onChange={v=>setFramed(v)}/>
+        <TweakButton label="Abrir Modo Palco" onClick={()=>setPresenting(musicas[0])}>
+          Abrir agora
+        </TweakButton>
+      </TweaksPanel>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
