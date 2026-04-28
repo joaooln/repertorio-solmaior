@@ -200,10 +200,7 @@ button { font-family: inherit; cursor: pointer; }
 
 /* Main area */
 .main {
-  display: flex; flex-direction: column;
-  overflow: hidden;
-  position: relative;
-  min-height: 0;
+  overflow-y: auto;
   height: 100%;
 }
 
@@ -213,8 +210,10 @@ button { font-family: inherit; cursor: pointer; }
   padding: var(--pad-page);
   gap: 24px;
   border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, rgba(255,255,255,0.012), transparent);
-  flex-shrink: 0;
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 .page-title-block { flex: 1; min-width: 0; }
 .page-title {
@@ -230,9 +229,6 @@ button { font-family: inherit; cursor: pointer; }
 .page-actions { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
 
 .page-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
   padding: var(--pad-page);
   display: flex; flex-direction: column;
   gap: var(--gap);
