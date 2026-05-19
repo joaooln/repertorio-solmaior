@@ -148,19 +148,44 @@ def _fetch_direct(url):
     main_content = next((c for c in candidates if c), soup.find('body') or soup)
     return main_content.get_text(separator='\n', strip=True)[:20000]
 
+class ProxyFetchError(Exception):
+    """Erro vindo do proxy de fallback (Jina), não do site original."""
+    def __init__(self, status_code, message):
+        self.status_code = status_code
+        super().__init__(message)
+
 def _fetch_jina(url):
     """Fallback via Jina Reader (r.jina.ai) — proxy gratuito que renderiza a página
-    e devolve markdown limpo. Bypassa Cloudflare e similar."""
+    e devolve texto limpo. Bypassa Cloudflare e similar.
+    Retry com backoff em 503/429 (rate limit ou origem temporariamente indisponível)."""
     proxy_url = f"https://r.jina.ai/{url}"
     headers = {
         'Accept': 'text/plain',
         'User-Agent': 'Mozilla/5.0',
-        # X-Return-Format=text faz devolver texto cru em vez de markdown completo
         'X-Return-Format': 'text',
     }
-    resp = requests.get(proxy_url, headers=headers, timeout=30)
-    resp.raise_for_status()
-    return resp.text[:20000]
+    api_key = os.environ.get('JINA_API_KEY')
+    if api_key:
+        headers['Authorization'] = f'Bearer {api_key}'
+
+    import time
+    delays = [0, 2, 5]  # 3 tentativas
+    last_status = None
+    for i, delay in enumerate(delays):
+        if delay:
+            time.sleep(delay)
+        try:
+            resp = requests.get(proxy_url, headers=headers, timeout=30)
+            if resp.status_code in (429, 503) and i < len(delays) - 1:
+                last_status = resp.status_code
+                print(f"Jina retornou {resp.status_code}, tentativa {i+1}/{len(delays)}…")
+                continue
+            resp.raise_for_status()
+            return resp.text[:20000]
+        except requests.HTTPError as e:
+            sc = e.response.status_code if e.response is not None else None
+            raise ProxyFetchError(sc, f"Jina Reader retornou HTTP {sc}") from e
+    raise ProxyFetchError(last_status, f"Jina Reader continuou retornando {last_status} após retries")
 
 def get_web_content(url):
     try:
@@ -420,6 +445,11 @@ def importar_musica():
 
     try:
         conteudo_web = get_web_content(url)
+    except ProxyFetchError as e:
+        print(f"ProxyFetchError ao buscar {url}: {e.status_code}")
+        if e.status_code in (429, 503):
+            return jsonify({'erro': f'O proxy de leitura (Jina Reader) está temporariamente sobrecarregado (HTTP {e.status_code}). Aguarde alguns segundos e tente de novo, ou configure JINA_API_KEY pra ter limite maior.'}), 429
+        return jsonify({'erro': f'O proxy de leitura falhou (HTTP {e.status_code}). Tente novamente.'}), 502
     except requests.HTTPError as e:
         sc = e.response.status_code if e.response is not None else '?'
         print(f"HTTPError ao buscar {url}: {sc}")
