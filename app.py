@@ -5,6 +5,7 @@ import os, json, re, subprocess, sys, psycopg2, io
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, send_file
+from werkzeug.exceptions import HTTPException
 import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
@@ -152,8 +153,15 @@ def get_web_content(url):
 
 @app.errorhandler(Exception)
 def handle_exception(e):
+    # Deixa 404, 405, etc. passarem com seu status correto
+    if isinstance(e, HTTPException):
+        return jsonify({"erro": e.description, "tipo": e.name}), e.code
     # Retorna o erro em JSON para facilitar o debug no Vercel
     return jsonify({"erro": str(e), "tipo": type(e).__name__}), 500
+
+@app.route('/favicon.ico')
+def favicon():
+    return ('', 204)
 
 # ─── Rotas: Músicas ────────────────────────────────────────────────────────────
 @app.route('/')

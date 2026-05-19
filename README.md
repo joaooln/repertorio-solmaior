@@ -103,6 +103,10 @@ Aberto a partir de qualquer música, ocupa a tela toda com fonte grande — idea
 - **Metrônomo integrado** com clique sonoro (Web Audio API) e indicador visual pulsante
 - **Controles por teclado:** Espaço = play/pause scroll · ↑↓ = scroll manual · Esc = fechar
 
+### Modo Palco (Repertório)
+
+Botão **▶ Palco** em cada repertório abre o Modo Apresentação na primeira música e adiciona uma navegação **◀ N/Total ▶** na barra superior para pular entre as músicas do show sem sair da tela cheia.
+
 ### Backup
 
 - **Exportar:** baixa toda a biblioteca (músicas + repertórios) como `backup_solmaior.json`
@@ -115,6 +119,12 @@ Aba dedicada com:
 - Ranking dos artistas mais cadastrados
 - Distribuição de músicas por tom
 - Nuvem de tags/estilos
+
+---
+
+## Interface
+
+Layout em duas colunas: **sidebar fixa** (Músicas · Repertórios · Estatísticas + indicador de conexão) e **área principal rolável**. Tema visual com paleta âmbar/midnight, fontes Fraunces (display), DM Sans (corpo) e JetBrains Mono (acordes).
 
 ---
 
@@ -149,9 +159,18 @@ Se uma música com a mesma URL já existir na biblioteca, o app pergunta se dese
 |--------|-----------|
 | Backend | Python · Flask · Gunicorn |
 | Banco de dados | PostgreSQL (Supabase) |
-| IA | Google Gemini API (extração de cifras) |
+| IA | Google Gemini API (extração de cifras) com fallback automático entre modelos |
 | PDF | ReportLab |
 | Scraping | BeautifulSoup + Requests |
 | Frontend | Vanilla JS · IndexedDB · Web Audio API |
 | Offline | Service Worker · Cache API |
-| Deploy | Vercel |
+| Deploy | Vercel (com cron diário em `/health` para keep-alive) |
+
+---
+
+## Variáveis de ambiente
+
+| Variável | Obrigatória | Para quê |
+|----------|-------------|----------|
+| `DATABASE_URL` | sim | String de conexão PostgreSQL (Supabase) — SSL é forçado |
+| `GEMINI_API_KEY` | só para importar via link | Chave do Google AI Studio para a extração de cifras |
