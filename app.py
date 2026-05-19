@@ -119,37 +119,45 @@ def tom_apos_st(tom, st):
     return NOTAS[idx] + m.group(2)
 
 def get_web_content(url):
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
-        }
-        resp = requests.get(url, headers=headers, timeout=15)
-        resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding or 'utf-8'
-        soup = BeautifulSoup(resp.text, 'html.parser')
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'Sec-Ch-Ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"macOS"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
+    }
+    resp = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
+    resp.raise_for_status()
+    resp.encoding = resp.apparent_encoding or 'utf-8'
+    soup = BeautifulSoup(resp.text, 'html.parser')
 
-        # Remove elementos irrelevantes
-        for s in soup(['script', 'style', 'header', 'footer', 'nav', 'aside', 'iframe', 'noscript']):
-            s.decompose()
+    # Remove elementos irrelevantes
+    for s in soup(['script', 'style', 'header', 'footer', 'nav', 'aside', 'iframe', 'noscript']):
+        s.decompose()
 
-        # Seletores em ordem de prioridade — do mais específico ao mais genérico
-        candidates = [
-            soup.find('div', class_='cifra_cnt'),            # Cifra Club (principal)
-            soup.find('div', id='cifra_cnt'),
-            soup.find('article', class_='cifra'),
-            soup.find('pre'),                                 # Muitos sites colocam a cifra em <pre>
-            soup.find('div', class_=re.compile(r'cifra|chord|lyric', re.I)),
-            soup.find('main'),
-            soup.find('article'),
-        ]
-        main_content = next((c for c in candidates if c), soup.find('body') or soup)
+    # Seletores em ordem de prioridade — do mais específico ao mais genérico
+    candidates = [
+        soup.find('div', class_='cifra_cnt'),            # Cifra Club (principal)
+        soup.find('div', id='cifra_cnt'),
+        soup.find('article', class_='cifra'),
+        soup.find('pre'),                                 # Muitos sites colocam a cifra em <pre>
+        soup.find('div', class_=re.compile(r'cifra|chord|lyric', re.I)),
+        soup.find('main'),
+        soup.find('article'),
+    ]
+    main_content = next((c for c in candidates if c), soup.find('body') or soup)
 
-        text = main_content.get_text(separator='\n', strip=True)
-        return text[:20000]
-    except Exception as e:
-        print(f"Erro ao buscar web: {e}")
-        return ""
+    text = main_content.get_text(separator='\n', strip=True)
+    return text[:20000]
 
 @app.errorhandler(Exception)
 def handle_exception(e):
@@ -396,9 +404,21 @@ def importar_musica():
 
     genai.configure(api_key=api_key)
 
-    conteudo_web = get_web_content(url)
+    try:
+        conteudo_web = get_web_content(url)
+    except requests.HTTPError as e:
+        sc = e.response.status_code if e.response is not None else '?'
+        print(f"HTTPError ao buscar {url}: {sc}")
+        return jsonify({'erro': f'O site bloqueou a requisição (HTTP {sc}). Cifra Club costuma bloquear IPs de servidores cloud; tente rodar localmente ou adicione manualmente.'}), 400
+    except requests.RequestException as e:
+        print(f"RequestException ao buscar {url}: {e}")
+        return jsonify({'erro': f'Falha de rede ao acessar a URL: {e}'}), 400
+    except Exception as e:
+        print(f"Erro inesperado ao buscar {url}: {e}")
+        return jsonify({'erro': f'Erro inesperado: {e}'}), 500
+
     if not conteudo_web:
-        return jsonify({'erro': 'Não foi possível ler o conteúdo do link. Verifique se a URL está correta e acessível.'}), 400
+        return jsonify({'erro': 'Página carregou mas não foi possível extrair conteúdo dela.'}), 400
 
     print(f"Conteúdo extraído ({len(conteudo_web)} chars): {conteudo_web[:300]}")
 
