@@ -208,7 +208,8 @@ def handle_exception(e):
 
 @app.route('/favicon.ico')
 def favicon():
-    return ('', 204)
+    from flask import send_from_directory
+    return send_from_directory('static', 'favicon.svg', mimetype='image/svg+xml')
 
 # ─── Rotas: Músicas ────────────────────────────────────────────────────────────
 @app.route('/')
