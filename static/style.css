@@ -898,6 +898,35 @@ select {
   .ap-letra-l  { font-size: 20px; }
   .two-col { grid-template-columns: 1fr; }
   .repgrid { grid-template-columns: 1fr; }
+
+  /* Ajustes de modal para telas móveis */
+  .modal {
+    padding: 20px 16px;
+    border-radius: 16px;
+  }
+  .modal-footer {
+    margin-top: 20px;
+    padding-top: 14px;
+    gap: 8px;
+  }
+
+  /* Otimização de Touch Targets (Tamanho de Toque) */
+  .songrow {
+    padding: 14px 18px;
+  }
+  .btn-xs {
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  .btn-icon-only {
+    padding: 10px;
+  }
+  .ap-drawer-item {
+    padding: 12px 14px;
+  }
+  .chip {
+    padding: 8px 14px;
+  }
 }
 
 /* Bottom Navigation (Mobile Only) */

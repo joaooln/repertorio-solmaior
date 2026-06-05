@@ -1151,6 +1151,7 @@ let _apScrollActive   = false;
 let _apScrollSpeed    = 1;
 let _apMetroInterval  = null;
 let _apMetroActive    = false;
+let _apAudioCtx       = null;
 let _apBpm            = 80;
 let _apBeat           = 0;
 let _apRepList        = [];
@@ -1259,6 +1260,15 @@ function toggleMetronomo() {
     if (btn) btn.classList.add('on');
     if (panel) panel.style.display = 'flex';
     if (toggle) { toggle.textContent = '⏸'; toggle.className = 'metro-toggle'; }
+    
+    // Inicializa AudioContext no fluxo do clique para contornar restrições do iOS
+    if (!_apAudioCtx) {
+      _apAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (_apAudioCtx.state === 'suspended') {
+      _apAudioCtx.resume();
+    }
+    
     _startMetronomo();
   } else {
     if (btn) btn.classList.remove('on');
@@ -1280,13 +1290,16 @@ function _startMetronomo() {
     const dot = document.getElementById('mb-' + _apBeat);
     if (dot) dot.classList.add('on');
     try {
-      const ctx = new (window.AudioContext||window.webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain); gain.connect(ctx.destination);
-      osc.frequency.value = _apBeat === 0 ? 1000 : 800;
-      gain.gain.value = 0.18;
-      osc.start(); osc.stop(ctx.currentTime + 0.04);
+      if (_apAudioCtx) {
+        const osc = _apAudioCtx.createOscillator();
+        const gain = _apAudioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(_apAudioCtx.destination);
+        osc.frequency.value = _apBeat === 0 ? 1000 : 800;
+        gain.gain.value = 0.18;
+        osc.start();
+        osc.stop(_apAudioCtx.currentTime + 0.04);
+      }
     } catch(e) {}
     _apBeat = (_apBeat + 1) % 4;
   }, ms);
@@ -1531,6 +1544,10 @@ async function openEditRep(id) {
               ondragstart="dragSrc=this;this.classList.add('dragging')"
               ondragend="this.classList.remove('dragging')">
               <span class="drag-handle">⠿</span>
+              <div class="drag-arrows" style="display:flex;flex-direction:column;gap:1px;margin-right:2px;flex-shrink:0;">
+                <button class="btn btn-quiet btn-xs btn-icon-only" onclick="event.stopPropagation();moveSongInRep('${m.id}', -1)" title="Mover para cima" style="padding:0;width:18px;height:14px;line-height:1;font-size:8px;display:flex;align-items:center;justify-content:center;">▲</button>
+                <button class="btn btn-quiet btn-xs btn-icon-only" onclick="event.stopPropagation();moveSongInRep('${m.id}', 1)" title="Mover para baixo" style="padding:0;width:18px;height:14px;line-height:1;font-size:8px;display:flex;align-items:center;justify-content:center;">▼</button>
+              </div>
               <div class="di-info">
                 <div class="di-title">${m.titulo}</div>
                 <div class="di-artist">${m.artista} · <span>${m.tom}</span></div>
@@ -1593,6 +1610,22 @@ async function adicionarNaLista(musicaId) {
 async function removerDaLista(musicaId) {
   const novas = getSelectedIds().filter(id=>id!==musicaId);
   await api.put(`/api/repertorios/${editRep.id}`, {musicas: novas});
+  openEditRep(editRep.id);
+}
+
+async function moveSongInRep(musicaId, direction) {
+  const selIds = getSelectedIds();
+  const idx = selIds.indexOf(musicaId);
+  if (idx === -1) return;
+  const targetIdx = idx + direction;
+  if (targetIdx < 0 || targetIdx >= selIds.length) return;
+  
+  // Troca de posição no array
+  const temp = selIds[idx];
+  selIds[idx] = selIds[targetIdx];
+  selIds[targetIdx] = temp;
+  
+  await api.put(`/api/repertorios/${editRep.id}`, {musicas: selIds});
   openEditRep(editRep.id);
 }
 
