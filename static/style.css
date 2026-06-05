@@ -1189,10 +1189,56 @@ select {
   border-radius: 4px;
 }
 
-/* Modo Apenas Acordes (Grade) no Modo Palco */
-.ap-mode-chords-only .ap-letra-l {
-  display: none;
-}
-.ap-mode-chords-only .ap-acorde-l {
+/* Modo Grade de Acordes no Modo Palco */
+.ap-grid-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   margin-bottom: 24px;
+}
+.ap-grid-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.ap-grid-row:hover {
+  border-color: color-mix(in oklab, var(--accent) 30%, transparent);
+  background: rgba(255, 255, 255, 0.03);
+}
+.ap-grid-cell {
+  padding: 16px 8px;
+  text-align: center;
+  font-family: var(--font-m);
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--accent);
+  border-right: 1.5px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  letter-spacing: 0.02em;
+}
+.ap-grid-cell:last-child {
+  border-right: none;
+}
+.ap-grid-cell[data-original="%"] {
+  color: var(--text-faint);
+  font-weight: 400;
+  font-size: 18px;
+}
+
+@media (max-width: 768px) {
+  .ap-grid-cell {
+    padding: 12px 4px;
+    font-size: 16px;
+    min-height: 48px;
+  }
 }

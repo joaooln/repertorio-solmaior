@@ -1040,6 +1040,14 @@ function transposeStage(st) {
     const origLine = el.dataset.original;
     el.textContent = jsTranspoeLinha(origLine, _apTransposeDiff);
   });
+
+  // Atualiza todas as células da grade de acordes
+  document.querySelectorAll('.ap-grid-cell').forEach(el => {
+    const origChord = el.dataset.original;
+    if (origChord) {
+      el.textContent = jsTranspoeLinha(origChord, _apTransposeDiff);
+    }
+  });
   
   toast(`Tom transposto: ${_apTransposeDiff > 0 ? '+' : ''}${_apTransposeDiff} semitons`);
 }
@@ -1069,10 +1077,27 @@ async function openApresentacao(id) {
     return `<div class="ap-letra-l">${l.texto}</div>`;
   }).join('');
 
+  const gridSections = m.tabela || [];
+  const gridHtml = gridSections.length ? gridSections.map(s => {
+    const secaoNome = s.nome_secao || '';
+    const rowsHtml = (s.grid || []).map(row => {
+      const cellsHtml = row.map(cell => {
+        return `<div class="ap-grid-cell" data-original="${cell.replace(/"/g, '&quot;')}">${cell}</div>`;
+      }).join('');
+      return `<div class="ap-grid-row">${cellsHtml}</div>`;
+    }).join('');
+    return `
+      <div class="ap-grid-secao">
+        <div class="ap-secao-l">${secaoNome}</div>
+        <div class="ap-grid-container">${rowsHtml}</div>
+      </div>
+    `;
+  }).join('') : '<div style="color:var(--text-faint);padding:60px;text-align:center;font-family:var(--font-m)">Nenhuma grade de acordes cadastrada</div>';
+
   _apBpm = bpm;
 
   document.body.insertAdjacentHTML('beforeend', `
-    <div class="ap-overlay ${_apSoloAcordes ? 'ap-mode-chords-only' : ''}" id="ap-root">
+    <div class="ap-overlay" id="ap-root">
       <div class="ap-bar">
         <button class="ap-back" onclick="closeApresentacao()">✕</button>
         <div class="ap-titles">
@@ -1162,14 +1187,17 @@ let _apSoloAcordes    = localStorage.getItem('apSoloAcordes') === 'true';
 function toggleApViewMode() {
   _apSoloAcordes = !_apSoloAcordes;
   localStorage.setItem('apSoloAcordes', _apSoloAcordes);
-  const root = document.getElementById('ap-root');
+  const viewCifra = document.getElementById('ap-view-cifra');
+  const viewGrid = document.getElementById('ap-view-grid');
   const btn = document.getElementById('ap-view-mode-btn');
-  if (root) {
+  if (viewCifra && viewGrid) {
     if (_apSoloAcordes) {
-      root.classList.add('ap-mode-chords-only');
+      viewCifra.style.display = 'none';
+      viewGrid.style.display = 'block';
       if (btn) btn.classList.add('on');
     } else {
-      root.classList.remove('ap-mode-chords-only');
+      viewCifra.style.display = 'block';
+      viewGrid.style.display = 'none';
       if (btn) btn.classList.remove('on');
     }
   }
