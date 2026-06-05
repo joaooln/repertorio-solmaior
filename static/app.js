@@ -1121,7 +1121,8 @@ async function openApresentacao(id) {
         </div>
       </div>
       <div class="ap-stage" id="ap-body">
-        <div class="ap-content">${html || '<div style="color:var(--text-faint);padding:60px;text-align:center;font-family:var(--font-m)">Nenhuma cifra cadastrada</div>'}</div>
+        <div class="ap-content" id="ap-view-cifra" style="${_apSoloAcordes ? 'display:none' : ''}">${html || '<div style="color:var(--text-faint);padding:60px;text-align:center;font-family:var(--font-m)">Nenhuma cifra cadastrada</div>'}</div>
+        <div class="ap-content" id="ap-view-grid" style="${_apSoloAcordes ? '' : 'display:none'}">${gridHtml}</div>
       </div>
       <div class="metro" id="ap-metro" style="display:none">
         <div class="metro-beats">
