@@ -256,7 +256,7 @@ def listar_musicas():
 @app.route('/api/musicas', methods=['POST'])
 def criar_musica():
     d = request.json
-    mid = gen_id()
+    mid = d.get('id') or gen_id()
     n = now_iso()
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -587,7 +587,7 @@ def listar_repertorios():
 @app.route('/api/repertorios', methods=['POST'])
 def criar_repertorio():
     d = request.json
-    rid = gen_id()
+    rid = d.get('id') or gen_id()
     n = now_iso()
     with get_db() as conn:
         with conn.cursor() as cur:

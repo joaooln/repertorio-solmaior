@@ -118,11 +118,56 @@ const api = {
 
   async post(url, d) {
     if (!navigator.onLine) {
-      // Imports e operações que requerem IA/servidor não funcionam offline
       if (url.includes('/importar')) throw new Error('Importação requer conexão com a internet');
-      // Criação de nova música/repertório offline: não suportado (IDs gerados no servidor)
-      if (url === '/api/musicas' || url === '/api/repertorios')
-        throw new Error('Criação de novos itens requer conexão. Conecte-se e tente novamente.');
+      
+      if (url === '/api/musicas' || url === '/api/repertorios') {
+        const clientId = crypto.randomUUID().slice(0, 8);
+        d.id = clientId;
+        
+        if (url === '/api/musicas') {
+          const newSong = {
+            id: clientId,
+            titulo: d.titulo,
+            artista: d.artista,
+            tom: d.tom || 'C',
+            tom_original: d.tom || 'C',
+            cifra_json: JSON.stringify(d.cifra_tradicional || []),
+            tabela_json: JSON.stringify(d.tabela || []),
+            tags: JSON.stringify(d.tags || []),
+            cifra_tradicional: d.cifra_tradicional || [],
+            tabela: d.tabela || [],
+            favorito: d.favorito || false,
+            criado_em: new Date().toISOString(),
+            atualizado_em: new Date().toISOString()
+          };
+          
+          const listCache = await idbGet('api_cache', '/api/musicas');
+          if (listCache && listCache.data) {
+            listCache.data.push(newSong);
+            await idbPut('api_cache', '/api/musicas', listCache);
+          }
+          await idbPut('api_cache', `/api/musicas/${clientId}`, { data: newSong, ts: Date.now() });
+        } else {
+          const newRep = {
+            id: clientId,
+            nome: d.nome,
+            musicas: [],
+            criado_em: new Date().toISOString(),
+            atualizado_em: new Date().toISOString()
+          };
+          
+          const listCache = await idbGet('api_cache', '/api/repertorios');
+          if (listCache && listCache.data) {
+            listCache.data.push(newRep);
+            await idbPut('api_cache', '/api/repertorios', listCache);
+          }
+          await idbPut('api_cache', `/api/repertorios/${clientId}`, { data: newRep, ts: Date.now() });
+        }
+        
+        await enqueueWrite('POST', url, d);
+        return { ok: true, id: clientId, offline: true };
+      }
+      
       await enqueueWrite('POST', url, d);
       return { ok: true, offline: true };
     }
@@ -133,14 +178,43 @@ const api = {
   async put(url, d) {
     if (!navigator.onLine) {
       // Atualiza o cache local imediatamente
-      const listCache = await idbGet('api_cache', '/api/musicas');
-      if (listCache) {
+      const mListCache = await idbGet('api_cache', '/api/musicas');
+      if (mListCache) {
         const idMatch = url.match(/\/api\/musicas\/([^/]+)$/);
         if (idMatch) {
-          listCache.data = listCache.data.map(m => m.id === idMatch[1] ? {...m, ...d} : m);
-          await idbPut('api_cache', '/api/musicas', listCache);
+          mListCache.data = mListCache.data.map(m => m.id === idMatch[1] ? {...m, ...d} : m);
+          await idbPut('api_cache', '/api/musicas', mListCache);
+          
+          const detailCache = await idbGet('api_cache', url);
+          if (detailCache) {
+            detailCache.data = {...detailCache.data, ...d};
+            await idbPut('api_cache', url, detailCache);
+          }
         }
       }
+      
+      const rListCache = await idbGet('api_cache', '/api/repertorios');
+      if (rListCache) {
+        const idMatch = url.match(/\/api\/repertorios\/([^/]+)$/);
+        if (idMatch) {
+          let resolvedSongs = [];
+          if (d.musicas && mListCache && mListCache.data) {
+            resolvedSongs = d.musicas.map(id => mListCache.data.find(m => m.id === id)).filter(Boolean);
+          }
+          
+          rListCache.data = rListCache.data.map(r => {
+            if (r.id === idMatch[1]) {
+              const updated = { ...r };
+              if (d.nome !== undefined) updated.nome = d.nome;
+              if (d.musicas !== undefined) updated.musicas = resolvedSongs;
+              return updated;
+            }
+            return r;
+          });
+          await idbPut('api_cache', '/api/repertorios', rListCache);
+        }
+      }
+      
       await enqueueWrite('PUT', url, d);
       return { ok: true, offline: true };
     }
@@ -150,6 +224,27 @@ const api = {
 
   async del(url) {
     if (!navigator.onLine) {
+      // Remover do cache local
+      const mListCache = await idbGet('api_cache', '/api/musicas');
+      if (mListCache) {
+        const idMatch = url.match(/\/api\/musicas\/([^/]+)$/);
+        if (idMatch) {
+          mListCache.data = mListCache.data.filter(m => m.id !== idMatch[1]);
+          await idbPut('api_cache', '/api/musicas', mListCache);
+          await idbDelete('api_cache', url);
+        }
+      }
+      
+      const rListCache = await idbGet('api_cache', '/api/repertorios');
+      if (rListCache) {
+        const idMatch = url.match(/\/api\/repertorios\/([^/]+)$/);
+        if (idMatch) {
+          rListCache.data = rListCache.data.filter(r => r.id !== idMatch[1]);
+          await idbPut('api_cache', '/api/repertorios', rListCache);
+          await idbDelete('api_cache', url);
+        }
+      }
+      
       await enqueueWrite('DELETE', url, null);
       return { ok: true, offline: true };
     }
@@ -213,8 +308,17 @@ function confirm_del(msg, cb) {
 let currentPage = '';
 function page(p) {
   currentPage = p;
+  
+  // Atualiza sidebar desktop
   document.querySelectorAll('.nav-item').forEach(e=>e.classList.remove('active'));
-  document.getElementById('nav-'+p).classList.add('active');
+  const navEl = document.getElementById('nav-'+p);
+  if (navEl) navEl.classList.add('active');
+  
+  // Atualiza bottom nav mobile
+  document.querySelectorAll('.bottom-nav-item').forEach(e=>e.classList.remove('active'));
+  const mNavEl = document.getElementById('m-nav-'+p);
+  if (mNavEl) mNavEl.classList.add('active');
+
   if(p==='musicas') renderMusicas();
   else if(p==='repertorios') renderRepertorios();
   else renderStats();
@@ -283,6 +387,12 @@ async function renderMusicas() {
           </span>
           <input placeholder="Buscar por título, artista ou tom…" value="${mFilter}" oninput="onSearchInput(this.value)" id="search-input"/>
         </div>
+        <select onchange="mTomFilter=this.value;renderMusicas()" style="width: 130px; flex: 0 0 auto; margin: 0; height: 44px; padding: 0 32px 0 12px; border-radius: 10px;">
+          <option value="">Tom: Todos</option>
+          ${['C', 'C#', 'Db', 'D', 'D#', 'Eb', 'E', 'F', 'F#', 'Gb', 'G', 'G#', 'Ab', 'A', 'A#', 'Bb', 'B', 
+             'Cm', 'C#m', 'Dm', 'D#m', 'Ebm', 'Em', 'Fm', 'F#m', 'Gm', 'G#m', 'Am', 'A#m', 'Bbm', 'Bm']
+             .map(t => `<option value="${t}" ${mTomFilter===t?'selected':''}>${t}</option>`).join('')}
+        </select>
       </div>
 
       <div class="chiprow">
@@ -881,6 +991,59 @@ async function doImportBackup(input) {
   finally { unload(); }
 }
 
+// ── Transposição de Chords no Palco (JS Frontend) ────────────────────────
+const JS_NOTAS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const JS_ENHAR = {'Db':'C#','Eb':'D#','Fb':'E','Gb':'F#','Ab':'G#','Bb':'A#','Cb':'B'};
+
+function jsNormaliza(n) {
+  return JS_ENHAR[n] || n;
+}
+
+function jsTranspoeAcorde(acorde, st) {
+  if (st === 0) return acorde;
+  return acorde.split('/').map(part => {
+    const m = part.match(/^([A-G][b#]?)(.*)$/);
+    if (!m) return part;
+    let raiz = m[1];
+    const suf = m[2];
+    raiz = jsNormaliza(raiz);
+    const idx = JS_NOTAS.indexOf(raiz);
+    if (idx === -1) return part;
+    let newIdx = (idx + st) % 12;
+    if (newIdx < 0) newIdx += 12;
+    return JS_NOTAS[newIdx] + suf;
+  }).join('/');
+}
+
+function jsTranspoeLinha(linha, st) {
+  if (st === 0) return linha;
+  const chordRegex = /\b([A-G][b#]?(?:m|maj|min|dim|aug|sus|add|M|7M|\+)?[0-9]?(?:\/[A-G][b#]?(?:m|maj|min|dim|aug|sus|add|M|7M|\+)?[0-9]?)?)(?![A-Za-z0-9#])/g;
+  return linha.replace(chordRegex, (match) => {
+    return jsTranspoeAcorde(match, st);
+  });
+}
+
+let _apTransposeDiff = 0;
+
+function transposeStage(st) {
+  _apTransposeDiff += st;
+  
+  // Atualiza badge do tom
+  const tomBadge = document.getElementById('ap-tom-stage');
+  if (tomBadge) {
+    const origTom = tomBadge.dataset.original;
+    tomBadge.textContent = jsTranspoeAcorde(origTom, _apTransposeDiff);
+  }
+  
+  // Atualiza todas as linhas de acordes
+  document.querySelectorAll('.ap-acorde-l').forEach(el => {
+    const origLine = el.dataset.original;
+    el.textContent = jsTranspoeLinha(origLine, _apTransposeDiff);
+  });
+  
+  toast(`Tom transposto: ${_apTransposeDiff > 0 ? '+' : ''}${_apTransposeDiff} semitons`);
+}
+
 // ── Modo Apresentação ──────────────────────────────────────────────────
 async function openApresentacao(id) {
   const m = await api.get(`/api/musicas/${id}`);
@@ -902,7 +1065,7 @@ async function openApresentacao(id) {
 
   const html = linhas.map(l => {
     if(l.tipo==='secao')  return `<div class="ap-secao-l">${l.texto}</div>`;
-    if(l.tipo==='acorde') return `<div class="ap-acorde-l">${l.texto}</div>`;
+    if(l.tipo==='acorde') return `<div class="ap-acorde-l" data-original="${l.texto.replace(/"/g, '&quot;')}">${l.texto}</div>`;
     return `<div class="ap-letra-l">${l.texto}</div>`;
   }).join('');
 
@@ -916,7 +1079,11 @@ async function openApresentacao(id) {
           <div class="ap-title">${m.titulo}</div>
           <div class="ap-artist">${m.artista}</div>
         </div>
-        <div class="ap-tom-large">${m.tom}</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-right:12px;">
+          <button class="ap-btn" onclick="transposeStage(-1)" title="Transpor -1 semitom" style="width:32px;height:32px;font-size:12px;padding:0;">♭</button>
+          <div class="ap-tom-large" id="ap-tom-stage" data-original="${m.tom}">${m.tom}</div>
+          <button class="ap-btn" onclick="transposeStage(1)" title="Transpor +1 semitom" style="width:32px;height:32px;font-size:12px;padding:0;">♯</button>
+        </div>
         <div class="ap-controls">
           <div class="ap-speed">
             <span>vel.</span>
@@ -946,6 +1113,37 @@ async function openApresentacao(id) {
     </div>`);
 
   document.addEventListener('keydown', apKeyHandler);
+  requestWakeLock();
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+}
+
+let _apWakeLock = null;
+
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    _apWakeLock = await navigator.wakeLock.request('screen');
+    console.log('Screen Wake Lock active');
+  } catch (err) {
+    console.warn(`Screen Wake Lock error: ${err.name}, ${err.message}`);
+  }
+}
+
+async function releaseWakeLock() {
+  if (!_apWakeLock) return;
+  try {
+    await _apWakeLock.release();
+    _apWakeLock = null;
+    console.log('Screen Wake Lock released');
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+async function handleVisibilityChange() {
+  if (_apWakeLock !== null && document.visibilityState === 'visible') {
+    await requestWakeLock();
+  }
 }
 
 let _apScrollInterval = null;
@@ -1070,6 +1268,9 @@ function apKeyHandler(e) {
 function closeApresentacao() {
   clearInterval(_apScrollInterval); clearInterval(_apMetroInterval);
   _apScrollActive=false; _apMetroActive=false;
+  _apTransposeDiff = 0;
+  releaseWakeLock();
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
   document.removeEventListener('keydown', apKeyHandler);
   document.getElementById('ap-root')?.remove();
 }
@@ -1483,9 +1684,111 @@ function openQRCode(rid, nome) {
     </div>`, 'modal-sm');
 }
 
+// ── Aparência / Personalização ─────────────────────────────────────────
+const ACCENT_PRESETS = {
+  gold:    { hex: '#d4a853', hex2: '#e5b966' },
+  copper:  { hex: '#d18a5d', hex2: '#e6a075' },
+  emerald: { hex: '#67c39a', hex2: '#8ad8b6' },
+  indigo:  { hex: '#9b8fe8', hex2: '#b4a8ff' },
+  bone:    { hex: '#e8ddc8', hex2: '#f5ecd8' },
+};
+
+const FONT_PRESETS = {
+  fraunces: { display: "'Fraunces', 'Playfair Display', serif" },
+  sansonly: { display: "'DM Sans', system-ui, sans-serif" },
+};
+
+function applyAppearance() {
+  const bg = localStorage.getItem('sm-bg') || 'midnight';
+  const density = localStorage.getItem('sm-density') || 'cozy';
+  const cards = localStorage.getItem('sm-cards') || 'glass';
+  const layout = localStorage.getItem('sm-layout') || 'sidebar';
+  const accent = localStorage.getItem('sm-accent') || 'gold';
+  const font = localStorage.getItem('sm-font') || 'fraunces';
+
+  const root = document.documentElement;
+  root.setAttribute('data-bg', bg);
+  root.setAttribute('data-density', density);
+  root.setAttribute('data-cards', cards);
+  root.setAttribute('data-layout', layout);
+  
+  const a = ACCENT_PRESETS[accent] || ACCENT_PRESETS.gold;
+  root.style.setProperty('--accent', a.hex);
+  root.style.setProperty('--accent-2', a.hex2);
+  
+  const f = FONT_PRESETS[font] || FONT_PRESETS.fraunces;
+  root.style.setProperty('--font-d', f.display);
+}
+
+function saveApperanceKey(key, value) {
+  localStorage.setItem(key, value);
+  applyAppearance();
+}
+
+function openAparência() {
+  const bg = localStorage.getItem('sm-bg') || 'midnight';
+  const density = localStorage.getItem('sm-density') || 'cozy';
+  const cards = localStorage.getItem('sm-cards') || 'glass';
+  const layout = localStorage.getItem('sm-layout') || 'sidebar';
+  const accent = localStorage.getItem('sm-accent') || 'gold';
+  const font = localStorage.getItem('sm-font') || 'fraunces';
+
+  modal(`
+    <div class="modal-header">
+      <h3 class="modal-title">✨ Ajustes de Aparência</h3>
+      <button class="close-btn" onclick="closeModal()">×</button>
+    </div>
+    <div class="form-group" style="margin-bottom: 14px;">
+      <label>Cor de Destaque (Acento)</label>
+      <select id="ap-accent-sel" onchange="saveApperanceKey('sm-accent', this.value)">
+        <option value="gold" ${accent==='gold'?'selected':''}>Dourado (Original)</option>
+        <option value="copper" ${accent==='copper'?'selected':''}>Cobre Quente</option>
+        <option value="emerald" ${accent==='emerald'?'selected':''}>Verde Esmeralda</option>
+        <option value="indigo" ${accent==='indigo'?'selected':''}>Índigo Noturno</option>
+        <option value="bone" ${accent==='bone'?'selected':''}>Marfim</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom: 14px;">
+      <label>Tema de Fundo</label>
+      <select id="ap-bg-sel" onchange="saveApperanceKey('sm-bg', this.value)">
+        <option value="midnight" ${bg==='midnight'?'selected':''}>Meia-noite (Escuro Azul)</option>
+        <option value="warm" ${bg==='warm'?'selected':''}>Quente (Escuro Marrom)</option>
+        <option value="cool" ${bg==='cool'?'selected':''}>Frio (Escuro Cinza)</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom: 14px;">
+      <label>Estilo dos Cartões</label>
+      <select id="ap-cards-sel" onchange="saveApperanceKey('sm-cards', this.value)">
+        <option value="glass" ${cards==='glass'?'selected':''}>Vidro Translúcido (Glassmorphism)</option>
+        <option value="flat" ${cards==='flat'?'selected':''}>Plano Sólido (Flat)</option>
+        <option value="outlined" ${cards==='outlined'?'selected':''}>Apenas Linha (Outlined)</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom: 14px;">
+      <label>Densidade do Espaçamento</label>
+      <select id="ap-density-sel" onchange="saveApperanceKey('sm-density', this.value)">
+        <option value="compact" ${density==='compact'?'selected':''}>Compacto</option>
+        <option value="cozy" ${density==='cozy'?'selected':''}>Aconchegante (Cozy)</option>
+        <option value="comfy" ${density==='comfy'?'selected':''}>Espaçoso (Comfy)</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom: 14px;">
+      <label>Tipografia de Destaque</label>
+      <select id="ap-font-sel" onchange="saveApperanceKey('sm-font', this.value)">
+        <option value="fraunces" ${font==='fraunces'?'selected':''}>Fraunces (Serifada Elegante)</option>
+        <option value="sansonly" ${font==='sansonly'?'selected':''}>DM Sans (Moderna Sem Serifas)</option>
+      </select>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeModal()">Concluído</button>
+    </div>
+  `, 'modal-sm');
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════════════════════════
+applyAppearance();
 updateOnlineUI();
 refreshPendingBadge();
 page('musicas');
