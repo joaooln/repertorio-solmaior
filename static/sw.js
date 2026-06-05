@@ -2,7 +2,7 @@
 // Service Worker — Repertório Sol Maior
 // Cache de assets estáticos para carregamento offline do shell
 // ══════════════════════════════════════════════════════════════════════
-const CACHE_NAME    = 'solmaior-shell-v7';
+const CACHE_NAME    = 'solmaior-shell-v8';
 const SHELL_ASSETS  = [
   '/',
   '/static/app.js',

@@ -890,6 +890,10 @@ select {
   .songlist-head > :nth-child(3) { display: none; }
 }
 @media (max-width: 768px) {
+  :root {
+    --pad-page: 16px 16px !important;
+  }
+
   .app-shell { grid-template-columns: 1fr; }
   .side { display: none; }
   .main { margin-left: 0; padding-bottom: 84px; }
@@ -898,6 +902,31 @@ select {
   .ap-letra-l  { font-size: 20px; }
   .two-col { grid-template-columns: 1fr; }
   .repgrid { grid-template-columns: 1fr; }
+
+  /* Ajuste do cabeçalho da página (Page Bar) no Mobile */
+  .page-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+    padding: 20px 16px 16px 16px;
+  }
+  .page-title-block {
+    text-align: left;
+  }
+  .page-title {
+    font-size: 26px;
+  }
+  .page-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .page-actions .btn {
+    flex: 1 1 auto;
+    justify-content: center;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
 
   /* Ajustes de modal para telas móveis */
   .modal {
@@ -926,6 +955,31 @@ select {
   }
   .chip {
     padding: 8px 14px;
+  }
+
+  /* Otimização da Tabela de Músicas no Mobile */
+  .songlist-head, .songrow {
+    grid-template-columns: 28px 1fr 56px 44px;
+    gap: 10px;
+  }
+  /* Oculta coluna de estilos (já ocultada) e de BPM/Duração no mobile */
+  .songlist-head > :nth-child(5),
+  .songrow > .song-meta {
+    display: none;
+  }
+
+  /* Carrossel Horizontal de Chips no Mobile */
+  .chiprow {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+    margin-bottom: -4px;
+    gap: 8px;
+    scrollbar-width: none; /* Firefox */
+  }
+  .chiprow::-webkit-scrollbar {
+    display: none; /* Safari/Chrome */
   }
 }
 
