@@ -1177,9 +1177,9 @@ function _renderRepNav() {
   nav.style.cssText = 'display:flex;align-items:center;gap:8px;margin-left:auto;margin-right:8px';
   nav.innerHTML = `
     <button class="ap-btn" onclick="apRepNav(-1)" title="Música anterior">◀</button>
-    <span id="ap-rep-pos" style="font-size:12px;color:var(--text-dim);font-family:var(--font-m);min-width:40px;text-align:center">
-      ${_apRepIdx+1}/${_apRepList.length}
-    </span>
+    <button class="ap-btn" onclick="toggleSetlistDrawer()" id="ap-rep-pos-btn" style="font-size:12px;font-family:var(--font-m);min-width:64px;text-align:center;padding:0 8px;" title="Ver setlist do show">
+      ${_apRepIdx+1}/${_apRepList.length} 📋
+    </button>
     <button class="ap-btn" onclick="apRepNav(1)" title="Próxima música">▶</button>`;
   bar.querySelector('.ap-controls').before(nav);
 }
@@ -1191,8 +1191,42 @@ async function apRepNav(dir) {
   closeApresentacao();
   await openApresentacao(_apRepList[_apRepIdx].id);
   _renderRepNav();
-  const pos = document.getElementById('ap-rep-pos');
-  if (pos) pos.textContent = `${_apRepIdx+1}/${_apRepList.length}`;
+}
+
+function toggleSetlistDrawer() {
+  let drawer = document.getElementById('ap-setlist-drawer');
+  if (!drawer) {
+    const itemsHtml = _apRepList.map((m, i) => `
+      <button class="ap-drawer-item ${i === _apRepIdx ? 'active' : ''}" onclick="apRepNavTo(${i})">
+        <span class="num">${String(i + 1).padStart(2, '0')}</span>
+        <span class="nm">${m.titulo}</span>
+        <span class="tm" style="color: ${i === _apRepIdx ? 'var(--accent)' : 'var(--text-dim)'}">${m.tom || ''}</span>
+      </button>
+    `).join('');
+
+    document.getElementById('ap-root').insertAdjacentHTML('beforeend', `
+      <div class="ap-drawer" id="ap-setlist-drawer">
+        <div class="ap-drawer-h">
+          <span>Setlist do Show</span>
+          <button class="ap-btn btn-xs btn-icon-only" onclick="toggleSetlistDrawer()">✕</button>
+        </div>
+        <div class="ap-drawer-list">
+          ${itemsHtml}
+        </div>
+      </div>
+    `);
+    drawer = document.getElementById('ap-setlist-drawer');
+    drawer.offsetHeight; // force reflow
+  }
+  drawer.classList.toggle('open');
+}
+
+async function apRepNavTo(idx) {
+  if (idx < 0 || idx >= _apRepList.length) return;
+  _apRepIdx = idx;
+  closeApresentacao();
+  await openApresentacao(_apRepList[_apRepIdx].id);
+  _renderRepNav();
 }
 
 function toggleAutoScroll() {
