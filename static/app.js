@@ -1072,14 +1072,14 @@ async function openApresentacao(id) {
   _apBpm = bpm;
 
   document.body.insertAdjacentHTML('beforeend', `
-    <div class="ap-overlay" id="ap-root">
+    <div class="ap-overlay ${_apSoloAcordes ? 'ap-mode-chords-only' : ''}" id="ap-root">
       <div class="ap-bar">
         <button class="ap-back" onclick="closeApresentacao()">✕</button>
         <div class="ap-titles">
           <div class="ap-title">${m.titulo}</div>
           <div class="ap-artist">${m.artista}</div>
         </div>
-        <div style="display:flex;align-items:center;gap:6px;margin-right:12px;">
+        <div class="ap-transpose-container" style="display:flex;align-items:center;gap:6px;margin-right:12px;">
           <button class="ap-btn" onclick="transposeStage(-1)" title="Transpor -1 semitom" style="width:32px;height:32px;font-size:12px;padding:0;">♭</button>
           <div class="ap-tom-large" id="ap-tom-stage" data-original="${m.tom}">${m.tom}</div>
           <button class="ap-btn" onclick="transposeStage(1)" title="Transpor +1 semitom" style="width:32px;height:32px;font-size:12px;padding:0;">♯</button>
@@ -1090,6 +1090,7 @@ async function openApresentacao(id) {
             <input type="range" min="0.3" max="3.5" step="0.1" value="${scrollSpeed.toFixed(1)}" id="ap-speed" oninput="setScrollSpeed(this.value)">
             <span id="ap-speed-val">${scrollSpeed.toFixed(1)}×</span>
           </div>
+          <button class="ap-btn ${_apSoloAcordes ? 'on' : ''}" id="ap-view-mode-btn" onclick="toggleApViewMode()" title="Alternar Letra/Grade de Acordes">▤</button>
           <button class="ap-btn" id="ap-metro-btn" onclick="toggleMetronomo()" title="Metrônomo">🥁</button>
           <button class="ap-btn" id="ap-scroll-btn" onclick="toggleAutoScroll()" title="Auto-scroll (espaço)">▶</button>
         </div>
@@ -1156,6 +1157,23 @@ let _apBpm            = 80;
 let _apBeat           = 0;
 let _apRepList        = [];
 let _apRepIdx         = -1;
+let _apSoloAcordes    = localStorage.getItem('apSoloAcordes') === 'true';
+
+function toggleApViewMode() {
+  _apSoloAcordes = !_apSoloAcordes;
+  localStorage.setItem('apSoloAcordes', _apSoloAcordes);
+  const root = document.getElementById('ap-root');
+  const btn = document.getElementById('ap-view-mode-btn');
+  if (root) {
+    if (_apSoloAcordes) {
+      root.classList.add('ap-mode-chords-only');
+      if (btn) btn.classList.add('on');
+    } else {
+      root.classList.remove('ap-mode-chords-only');
+      if (btn) btn.classList.remove('on');
+    }
+  }
+}
 
 async function openPalcoRep(id) {
   const reps = await api.get('/api/repertorios');
