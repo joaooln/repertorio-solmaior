@@ -147,7 +147,29 @@ def _fetch_direct(url):
     resp = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
     resp.raise_for_status()
     resp.encoding = resp.apparent_encoding or 'utf-8'
+
+    # Se foi bloqueado por Cloudflare ou similar (mesmo retornando status 200)
+    text_lower = resp.text.lower()
+    if any(marker in text_lower for marker in ['cloudflare', 'ray id', 'captcha', 'verify you are human', 'checking your browser', 'ddos-guard', 'unusual activity']):
+        mock_resp = requests.Response()
+        mock_resp.status_code = 403
+        raise requests.HTTPError("Bloqueio anti-bot Cloudflare detectado na requisição direta", response=mock_resp)
+
     soup = BeautifulSoup(resp.text, 'html.parser')
+
+    # Para o Cifra Club, valida se contêiner de cifra existe na página obtida
+    if 'cifraclub.com.br' in url:
+        has_cifra = (
+            soup.find('div', class_='cifra_cnt') or 
+            soup.find('div', id='cifra_cnt') or 
+            soup.find('pre') or 
+            soup.find('article', class_='cifra')
+        )
+        if not has_cifra:
+            mock_resp = requests.Response()
+            mock_resp.status_code = 403
+            raise requests.HTTPError("Contêiner de cifra do Cifra Club não localizado na página direta", response=mock_resp)
+
     for s in soup(['script', 'style', 'header', 'footer', 'nav', 'aside', 'iframe', 'noscript']):
         s.decompose()
     candidates = [
