@@ -13,6 +13,20 @@ from bs4 import BeautifulSoup
 app = Flask(__name__)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+from functools import wraps
+
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "solmaior123")
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        pw = request.headers.get("X-Admin-Password")
+        if not pw or pw != ADMIN_PASSWORD:
+            return jsonify({'erro': 'Senha de administrador inválida ou não fornecida'}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+
 # ─── Banco de dados ────────────────────────────────────────────────────────────
 def get_db():
     # Supabase/PostgreSQL na nuvem geralmente exige SSL
@@ -254,6 +268,7 @@ def listar_musicas():
             return jsonify(result)
 
 @app.route('/api/musicas', methods=['POST'])
+@admin_required
 def criar_musica():
     d = request.json
     mid = d.get('id') or gen_id()
@@ -288,6 +303,7 @@ def get_musica(mid):
             return jsonify(m)
 
 @app.route('/api/musicas/<mid>', methods=['PUT'])
+@admin_required
 def atualizar_musica(mid):
     d = request.json
     n = now_iso()
@@ -322,6 +338,7 @@ def atualizar_musica(mid):
     return jsonify({'ok': True})
 
 @app.route('/api/musicas/<mid>', methods=['DELETE'])
+@admin_required
 def deletar_musica(mid):
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -331,6 +348,7 @@ def deletar_musica(mid):
     return jsonify({'ok': True})
 
 @app.route('/api/musicas/<mid>/transpor', methods=['POST'])
+@admin_required
 def transpor_musica(mid):
     d = request.json
     st = int(d.get('semitones', 0))
@@ -422,6 +440,7 @@ def call_gemini(prompt):
     raise last_err
 
 @app.route('/api/musicas/importar', methods=['POST'])
+@admin_required
 def importar_musica():
     url = request.json.get('url', '').strip()
     substituir = request.json.get('substituir', False)
@@ -585,6 +604,7 @@ def listar_repertorios():
             return jsonify(result)
 
 @app.route('/api/repertorios', methods=['POST'])
+@admin_required
 def criar_repertorio():
     d = request.json
     rid = d.get('id') or gen_id()
@@ -599,6 +619,7 @@ def criar_repertorio():
     return jsonify({'id': rid, 'ok': True})
 
 @app.route('/api/repertorios/<rid>', methods=['PUT'])
+@admin_required
 def atualizar_repertorio(rid):
     d = request.json
     with get_db() as conn:
@@ -619,6 +640,7 @@ def atualizar_repertorio(rid):
     return jsonify({'ok': True})
 
 @app.route('/api/repertorios/<rid>', methods=['DELETE'])
+@admin_required
 def deletar_repertorio(rid):
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -973,6 +995,7 @@ def exportar_biblioteca():
     return send_file(buf, as_attachment=True, download_name='backup_solmaior.json', mimetype='application/json')
 
 @app.route('/api/biblioteca/import', methods=['POST'])
+@admin_required
 def importar_biblioteca():
     try:
         data = request.json

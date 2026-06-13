@@ -40,9 +40,24 @@ async function syncPendingWrites() {
 
   for (const item of items) {
     try {
-      const opts = { method: item.method, headers: {'Content-Type':'application/json'} };
+      const opts = { 
+        method: item.method, 
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Password': localStorage.getItem('adminPassword') || ''
+        } 
+      };
       if (item.body) opts.body = JSON.stringify(item.body);
-      const r = await fetch(item.url, opts);
+      let r = await fetch(item.url, opts);
+      if (r.status === 401) {
+        localStorage.removeItem('adminPassword');
+        const pw = prompt('Senha de administrador necessária para sincronizar alterações pendentes:');
+        if (pw) {
+          localStorage.setItem('adminPassword', pw);
+          opts.headers['X-Admin-Password'] = pw;
+          r = await fetch(item.url, opts);
+        }
+      }
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       await idbDelete('pending', item.qid);
       ok++;
@@ -87,6 +102,56 @@ function isCacheable(url) {
   return CACHEABLE.some(p => url === p || url.startsWith(p + '?') || url.startsWith(p + '/'));
 }
 
+function checkOfflineAuth() {
+  if (!localStorage.getItem('adminPassword')) {
+    const pw = prompt('Senha de administrador necessária para realizar alterações:');
+    if (!pw) throw new Error('Senha de administrador não fornecida');
+    localStorage.setItem('adminPassword', pw);
+  }
+}
+
+async function fetchWithAuth(url, method, bodyObj) {
+  let pw = localStorage.getItem('adminPassword');
+  if (!pw) {
+    pw = prompt('Senha de administrador necessária para realizar alterações:');
+    if (!pw) {
+      return {
+        ok: false,
+        status: 401,
+        json: async () => ({ erro: 'Senha de administrador não fornecida' })
+      };
+    }
+    localStorage.setItem('adminPassword', pw);
+  }
+
+  const opts = {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Admin-Password': pw
+    }
+  };
+  if (bodyObj) opts.body = JSON.stringify(bodyObj);
+
+  let r = await fetch(url, opts);
+  if (r.status === 401) {
+    localStorage.removeItem('adminPassword');
+    const newPw = prompt('Senha de administrador incorreta. Digite novamente:');
+    if (newPw) {
+      localStorage.setItem('adminPassword', newPw);
+      opts.headers['X-Admin-Password'] = newPw;
+      r = await fetch(url, opts);
+    } else {
+      return {
+        ok: false,
+        status: 401,
+        json: async () => ({ erro: 'Senha de administrador incorreta' })
+      };
+    }
+  }
+  return r;
+}
+
 const api = {
   async get(url) {
     try {
@@ -118,6 +183,7 @@ const api = {
 
   async post(url, d) {
     if (!navigator.onLine) {
+      checkOfflineAuth();
       if (url.includes('/importar')) throw new Error('Importação requer conexão com a internet');
       
       if (url === '/api/musicas' || url === '/api/repertorios') {
@@ -171,12 +237,17 @@ const api = {
       await enqueueWrite('POST', url, d);
       return { ok: true, offline: true };
     }
-    const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d) });
+    const r = await fetchWithAuth(url, 'POST', d);
+    if (!r.ok) {
+      const errData = await r.json().catch(() => ({}));
+      return { erro: errData.erro || `Erro HTTP ${r.status}` };
+    }
     return r.json();
   },
 
   async put(url, d) {
     if (!navigator.onLine) {
+      checkOfflineAuth();
       // Atualiza o cache local imediatamente
       const mListCache = await idbGet('api_cache', '/api/musicas');
       if (mListCache) {
@@ -218,12 +289,17 @@ const api = {
       await enqueueWrite('PUT', url, d);
       return { ok: true, offline: true };
     }
-    const r = await fetch(url, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(d) });
+    const r = await fetchWithAuth(url, 'PUT', d);
+    if (!r.ok) {
+      const errData = await r.json().catch(() => ({}));
+      return { erro: errData.erro || `Erro HTTP ${r.status}` };
+    }
     return r.json();
   },
 
   async del(url) {
     if (!navigator.onLine) {
+      checkOfflineAuth();
       // Remover do cache local
       const mListCache = await idbGet('api_cache', '/api/musicas');
       if (mListCache) {
@@ -248,7 +324,11 @@ const api = {
       await enqueueWrite('DELETE', url, null);
       return { ok: true, offline: true };
     }
-    const r = await fetch(url, { method:'DELETE' });
+    const r = await fetchWithAuth(url, 'DELETE', null);
+    if (!r.ok) {
+      const errData = await r.json().catch(() => ({}));
+      return { erro: errData.erro || `Erro HTTP ${r.status}` };
+    }
     return r.json();
   },
 };
