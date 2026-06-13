@@ -445,6 +445,84 @@ async function renderMusicas() {
   const nc = document.getElementById('nav-count-musicas');
   if (nc) nc.textContent = counts.length;
 
+  const inputEl = document.getElementById('search-input');
+
+  // Se o input de busca já está no DOM, fazemos uma atualização parcial
+  // para evitar recriar o elemento de busca e perder o foco/seleção.
+  if (inputEl) {
+    const pageSubEl = document.querySelector('.page-title-block .page-sub');
+    if (pageSubEl) {
+      pageSubEl.textContent = `${counts.length} cifras na biblioteca · ${favCount} favoritas`;
+    }
+
+    if (inputEl.value !== mFilter) {
+      inputEl.value = mFilter;
+    }
+
+    const selectEl = document.querySelector('.searchrow select');
+    if (selectEl && selectEl.value !== mTomFilter) {
+      selectEl.value = mTomFilter;
+    }
+
+    const chiprowEl = document.querySelector('.chiprow');
+    if (chiprowEl) {
+      chiprowEl.innerHTML = `
+        <button class="chip ${noFilter?'on':''}" onclick="mFavOnly=false;mTagFilter='';renderMusicas()">Todas <span class="chip-count">${counts.length}</span></button>
+        <button class="chip ${mFavOnly?'on':''}" onclick="mFavOnly=!mFavOnly;mTagFilter='';renderMusicas()">★ Favoritas <span class="chip-count">${favCount}</span></button>
+        ${allTags.length ? `<span style="width:1px;height:16px;background:var(--line);margin:0 4px;display:inline-block"></span>` : ''}
+        ${allTags.map(t => {
+          const n = counts.filter(m=>(m.tags||[]).includes(t)).length;
+          return `<button class="chip ${mTagFilter===t?'on':''}" onclick="mTagFilter=mTagFilter==='${t}'?'':'${t}';mFavOnly=false;renderMusicas()">${t} <span class="chip-count">${n}</span></button>`;
+        }).join('')}
+      `;
+    }
+
+    const songlistEl = document.querySelector('.songlist');
+    if (songlistEl) {
+      songlistEl.innerHTML = `
+        <div class="songlist-head">
+          <div></div>
+          <div>Título · Artista</div>
+          <div>Estilos</div>
+          <div>Tom</div>
+          <div>BPM · Duração</div>
+          <div></div>
+        </div>
+        ${allMusicas.map(m => `
+          <div class="songrow" onclick="openEdit('${m.id}')">
+            <button class="song-fav ${m.favorito?'on':''}" onclick="event.stopPropagation();toggleFav('${m.id}',${!!m.favorito})">
+              ${m.favorito ? '★' : '☆'}
+            </button>
+            <div>
+              <div class="song-title">${m.titulo}</div>
+              <div class="song-artist">${m.artista}</div>
+            </div>
+            <div class="song-tags">
+              ${(m.tags||[]).map(t=>`<span class="song-tag">${t}</span>`).join('')}
+            </div>
+            <div class="song-tom">${m.tom}</div>
+            <div class="song-meta">
+              ${m.bpm ? `<span class="bpm">${m.bpm} bpm</span>` : ''}
+              ${m.duracao_min ? `<span class="dur">${m.duracao_min}min</span>` : ''}
+            </div>
+            <div class="song-action">
+              <button class="song-play" onclick="event.stopPropagation();openApresentacao('${m.id}')">▶</button>
+            </div>
+          </div>
+        `).join('')}
+        ${allMusicas.length===0 ? `
+          <div class="empty">
+            <h3>${(mFilter||mFavOnly||mTagFilter) ? 'Nenhuma música encontrada' : 'Biblioteca vazia'}</h3>
+            <p>${(mFilter||mFavOnly||mTagFilter) ? 'Tente outros termos ou limpe os filtros.' : 'Adicione cifras via link ou comece do zero.'}</p>
+            ${!(mFilter||mFavOnly||mTagFilter) ? `<button class="btn btn-primary" onclick="openImport()">✦ Importar via link</button>` : ''}
+          </div>
+        ` : ''}
+      `;
+    }
+    return;
+  }
+
+  // Renderização inicial completa
   document.getElementById('app-main').innerHTML = `
     <div class="page-bar">
       <div class="page-title-block">
