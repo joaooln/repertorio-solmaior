@@ -161,19 +161,56 @@ const api = {
       if (isCacheable(url)) await idbPut('api_cache', url, { data, ts: Date.now() });
       return data;
     } catch (e) {
-      // offline ou erro de rede: tenta cache
+      // offline ou erro de rede: tenta cache para a URL exata
       const cached = await idbGet('api_cache', url);
       if (cached) return cached.data;
-      // fallback especial para /api/musicas/:id
-      const idMatch = url.match(/^\/api\/musicas\/([^/?]+)$/);
-      if (idMatch) {
-        const list = await idbGet('api_cache', '/api/musicas');
-        if (list) {
-          const found = list.data.find(m => m.id === idMatch[1]);
-          if (found) {
-            found.cifra_tradicional = found.cifra_tradicional || JSON.parse(found.cifra_json || '[]');
-            found.tabela = found.tabela || JSON.parse(found.tabela_json || '[]');
-            return found;
+
+      // Fallback especial para filtragem e buscas locais de músicas
+      if (url.startsWith('/api/musicas')) {
+        const idMatch = url.match(/^\/api\/musicas\/([^/?]+)$/);
+        if (idMatch) {
+          // Se for rota de detalhe /api/musicas/:id
+          const list = await idbGet('api_cache', '/api/musicas');
+          if (list) {
+            const found = list.data.find(m => m.id === idMatch[1]);
+            if (found) {
+              found.cifra_tradicional = found.cifra_tradicional || JSON.parse(found.cifra_json || '[]');
+              found.tabela = found.tabela || JSON.parse(found.tabela_json || '[]');
+              return found;
+            }
+          }
+        } else {
+          // Se for rota de lista com ou sem filtros (/api/musicas ou /api/musicas?...)
+          const listCache = await idbGet('api_cache', '/api/musicas');
+          if (listCache && listCache.data) {
+            let list = [...listCache.data];
+            
+            // Tratamento de URLs relativas para extrair os parâmetros de query
+            const urlObj = new URL(url, window.location.origin);
+            const q = urlObj.searchParams.get('q');
+            const favorito = urlObj.searchParams.get('favorito');
+            const tom = urlObj.searchParams.get('tom');
+            const tag = urlObj.searchParams.get('tag');
+
+            if (q) {
+              const query = q.toLowerCase();
+              list = list.filter(m => 
+                (m.titulo && m.titulo.toLowerCase().includes(query)) ||
+                (m.artista && m.artista.toLowerCase().includes(query))
+              );
+            }
+            if (favorito === '1') {
+              list = list.filter(m => m.favorito);
+            }
+            if (tom) {
+              list = list.filter(m => m.tom === tom);
+            }
+            if (tag) {
+              list = list.filter(m => (m.tags || []).includes(tag));
+            }
+
+            list.sort((a, b) => (a.titulo || '').localeCompare(b.titulo || '', 'pt-BR'));
+            return list;
           }
         }
       }
@@ -207,11 +244,12 @@ const api = {
             atualizado_em: new Date().toISOString()
           };
           
-          const listCache = await idbGet('api_cache', '/api/musicas');
-          if (listCache && listCache.data) {
-            listCache.data.push(newSong);
-            await idbPut('api_cache', '/api/musicas', listCache);
+          let listCache = await idbGet('api_cache', '/api/musicas');
+          if (!listCache) {
+            listCache = { data: [], ts: Date.now() };
           }
+          listCache.data.push(newSong);
+          await idbPut('api_cache', '/api/musicas', listCache);
           await idbPut('api_cache', `/api/musicas/${clientId}`, { data: newSong, ts: Date.now() });
         } else {
           const newRep = {
@@ -222,11 +260,12 @@ const api = {
             atualizado_em: new Date().toISOString()
           };
           
-          const listCache = await idbGet('api_cache', '/api/repertorios');
-          if (listCache && listCache.data) {
-            listCache.data.push(newRep);
-            await idbPut('api_cache', '/api/repertorios', listCache);
+          let listCache = await idbGet('api_cache', '/api/repertorios');
+          if (!listCache) {
+            listCache = { data: [], ts: Date.now() };
           }
+          listCache.data.push(newRep);
+          await idbPut('api_cache', '/api/repertorios', listCache);
           await idbPut('api_cache', `/api/repertorios/${clientId}`, { data: newRep, ts: Date.now() });
         }
         
@@ -2057,10 +2096,36 @@ function openAparência() {
   `, 'modal-sm');
 }
 
+// ── Pre-cache para uso offline ─────────────────────────────────────────
+async function preCacheCriticalData() {
+  try {
+    await Promise.all([
+      api.get('/api/musicas'),
+      api.get('/api/repertorios'),
+      api.get('/api/stats')
+    ]);
+    
+    // Atualiza contadores do sidebar imediatamente caso estejam carregados
+    const mList = await idbGet('api_cache', '/api/musicas');
+    const rList = await idbGet('api_cache', '/api/repertorios');
+    if (mList && mList.data) {
+      const ncMusicas = document.getElementById('nav-count-musicas');
+      if (ncMusicas) ncMusicas.textContent = mList.data.length;
+    }
+    if (rList && rList.data) {
+      const ncReps = document.getElementById('nav-count-reps');
+      if (ncReps) ncReps.textContent = rList.data.length;
+    }
+  } catch (e) {
+    console.warn('Pre-cache falhou (dispositivo offline):', e);
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════════════════════════
 applyAppearance();
 updateOnlineUI();
 refreshPendingBadge();
+preCacheCriticalData();
 page('musicas');
