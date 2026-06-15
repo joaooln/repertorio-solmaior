@@ -2,7 +2,7 @@
 // Service Worker — Repertório Sol Maior
 // Cache de assets estáticos para carregamento offline do shell
 // ══════════════════════════════════════════════════════════════════════
-const CACHE_NAME    = 'solmaior-shell-v14';
+const CACHE_NAME    = 'solmaior-shell-v15';
 const SHELL_ASSETS  = [
   '/',
   '/static/app.js',
@@ -10,7 +10,7 @@ const SHELL_ASSETS  = [
   '/static/style.css',
   '/static/favicon.svg',
   '/static/manifest.json',
-  'https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,700&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap',
+  'https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap',
 ];
 
 // ── Install: pré-carrega o shell ───────────────────────────────────────
