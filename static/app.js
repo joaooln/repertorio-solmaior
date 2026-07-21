@@ -1,3 +1,8 @@
+function removeAccents(str) {
+  if (!str) return '';
+  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // OFFLINE / SYNC
 // ══════════════════════════════════════════════════════════════════════
@@ -193,10 +198,11 @@ const api = {
             const tag = urlObj.searchParams.get('tag');
 
             if (q) {
-              const query = q.toLowerCase();
+              const query = removeAccents(q).toLowerCase();
               list = list.filter(m => 
-                (m.titulo && m.titulo.toLowerCase().includes(query)) ||
-                (m.artista && m.artista.toLowerCase().includes(query))
+                removeAccents(m.titulo || '').toLowerCase().includes(query) ||
+                removeAccents(m.artista || '').toLowerCase().includes(query) ||
+                removeAccents(m.tom || '').toLowerCase().includes(query)
               );
             }
             if (favorito === '1') {
@@ -1162,6 +1168,23 @@ function openBackup() {
 async function _exportBackup() {
   loading('Exportando...');
   try {
+    if (!navigator.onLine) {
+      const mList = await idbGet('api_cache', '/api/musicas');
+      const rList = await idbGet('api_cache', '/api/repertorios');
+      const data = {
+        musicas: (mList && mList.data) ? mList.data : [],
+        repertorios: (rList && rList.data) ? rList.data : [],
+        exportado_em: new Date().toISOString(),
+        offline: true
+      };
+      const jsonStr = JSON.stringify(data, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'backup_solmaior.json'; a.click();
+      URL.revokeObjectURL(url);
+      toast('✅ Backup exportado (cache local)!');
+      return;
+    }
     const resp = await fetch('/api/biblioteca/export');
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
@@ -1179,6 +1202,39 @@ async function doImportBackup(input) {
   try {
     const text = await file.text();
     const data = JSON.parse(text);
+    if (!data.musicas && !data.repertorios) throw new Error('Formato de arquivo de backup inválido');
+
+    if (!navigator.onLine) {
+      checkOfflineAuth();
+      let mList = await idbGet('api_cache', '/api/musicas');
+      if (!mList) mList = { data: [], ts: Date.now() };
+      let rList = await idbGet('api_cache', '/api/repertorios');
+      if (!rList) rList = { data: [], ts: Date.now() };
+
+      let imported = 0, skipped = 0;
+      for (const m of (data.musicas || [])) {
+        const exists = mList.data.find(x => x.id === m.id);
+        if (exists) { skipped++; continue; }
+        mList.data.push(m);
+        await idbPut('api_cache', `/api/musicas/${m.id}`, { data: m, ts: Date.now() });
+        await enqueueWrite('POST', '/api/musicas', m);
+        imported++;
+      }
+      for (const r of (data.repertorios || [])) {
+        const exists = rList.data.find(x => x.id === r.id);
+        if (exists) continue;
+        rList.data.push(r);
+        await idbPut('api_cache', `/api/repertorios/${r.id}`, { data: r, ts: Date.now() });
+        await enqueueWrite('POST', '/api/repertorios', r);
+      }
+      await idbPut('api_cache', '/api/musicas', mList);
+      await idbPut('api_cache', '/api/repertorios', rList);
+      closeModal();
+      toast(`✅ ${imported} música${imported!==1?'s':''} importada${imported!==1?'s':''} offline${skipped?' ('+skipped+' já existiam)':''}`);
+      renderMusicas();
+      return;
+    }
+
     const r = await api.post('/api/biblioteca/import', data);
     if(r.erro) throw new Error(r.erro);
     closeModal();
@@ -1550,16 +1606,51 @@ function _startMetronomo() {
 }
 
 function apKeyHandler(e) {
-  if(e.key === 'Escape') closeApresentacao();
-  if(e.key === ' ') { e.preventDefault(); toggleAutoScroll(); }
-  if(e.key === 'ArrowUp')   { const b=document.getElementById('ap-body'); if(b) b.scrollTop -= 80; }
-  if(e.key === 'ArrowDown') { const b=document.getElementById('ap-body'); if(b) b.scrollTop += 80; }
+  if (e.key === 'Escape') { closeApresentacao(); return; }
+  if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); toggleAutoScroll(); return; }
+  if (e.key === 'PageDown' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    const b = document.getElementById('ap-body');
+    if (b) b.scrollTop += (e.key === 'PageDown' ? 350 : 80);
+    return;
+  }
+  if (e.key === 'PageUp' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const b = document.getElementById('ap-body');
+    if (b) b.scrollTop -= (e.key === 'PageUp' ? 350 : 80);
+    return;
+  }
+  if (e.key === '+' || e.key === '=' || e.key === '♯') {
+    e.preventDefault(); transposeStage(1); return;
+  }
+  if (e.key === '-' || e.key === '_' || e.key === '♭') {
+    e.preventDefault(); transposeStage(-1); return;
+  }
+  if (e.key === 'm' || e.key === 'M') {
+    e.preventDefault(); toggleMetronomo(); return;
+  }
+  if (e.key === 'g' || e.key === 'G') {
+    e.preventDefault(); toggleApViewMode(); return;
+  }
 }
 
 function closeApresentacao() {
-  clearInterval(_apScrollInterval); clearInterval(_apMetroInterval);
-  _apScrollActive=false; _apMetroActive=false;
+  clearInterval(_apScrollInterval);
+  clearInterval(_apMetroInterval);
+  _apScrollActive = false;
+  _apMetroActive = false;
   _apTransposeDiff = 0;
+
+  // Reseta UI do metrônomo se estava ativo
+  const metroBtn = document.getElementById('ap-metro-btn');
+  const metroPanel = document.getElementById('ap-metro');
+  if (metroBtn) metroBtn.classList.remove('on');
+  if (metroPanel) metroPanel.style.display = 'none';
+
+  // Reseta UI do auto-scroll
+  const scrollBtn = document.getElementById('ap-scroll-btn');
+  if (scrollBtn) { scrollBtn.textContent = '▶'; scrollBtn.classList.remove('on'); }
+
   releaseWakeLock();
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   document.removeEventListener('keydown', apKeyHandler);
@@ -1833,8 +1924,16 @@ function renderDisponiveis(lista) {
 
 async function filtrarDisp(q) {
   const todas = await api.get('/api/musicas' + (q ? `?q=${encodeURIComponent(q)}` : ''));
+  const qNorm = removeAccents(q).toLowerCase();
   const selIds = getSelectedIds();
-  const disp = todas.filter(m=>!selIds.includes(m.id));
+  const disp = todas.filter(m => {
+    if (selIds.includes(m.id)) return false;
+    if (!qNorm) return true;
+    const titNorm = removeAccents(m.titulo || '').toLowerCase();
+    const artNorm = removeAccents(m.artista || '').toLowerCase();
+    const tomNorm = removeAccents(m.tom || '').toLowerCase();
+    return titNorm.includes(qNorm) || artNorm.includes(qNorm) || tomNorm.includes(qNorm);
+  });
   const el = document.getElementById('avail-list');
   if(el) el.innerHTML = renderDisponiveis(disp);
 }

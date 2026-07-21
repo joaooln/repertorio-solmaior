@@ -1,7 +1,7 @@
 """
 Repertório Sol Maior — Backend Flask + SQLite
 """
-import os, json, re, subprocess, sys, psycopg2, io
+import os, json, re, subprocess, sys, psycopg2, io, unicodedata
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, send_file
@@ -85,6 +85,14 @@ def now_iso():
     return datetime.utcnow().isoformat()
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
+def remove_acentos(texto):
+    if not texto: return ''
+    return ''.join(c for c in unicodedata.normalize('NFD', str(texto)) if unicodedata.category(c) != 'Mn')
+
+def sanitizar_pdf(texto):
+    if not texto: return ''
+    return str(texto).replace('♭', 'b').replace('♯', '#')
+
 NOTAS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 ENHAR = {'Db':'C#','Eb':'D#','Fb':'E','Gb':'F#','Ab':'G#','Bb':'A#','Cb':'B'}
 
@@ -267,9 +275,6 @@ def listar_musicas():
     tom      = request.args.get('tom', '')
     tag      = request.args.get('tag', '')
     conditions, params = [], []
-    if q:
-        conditions.append("(titulo ILIKE %s OR artista ILIKE %s)")
-        params += [f'%{q}%', f'%{q}%']
     if favorito == '1':
         conditions.append("favorito = TRUE")
     if tom:
@@ -281,11 +286,18 @@ def listar_musicas():
             cur.execute(f"SELECT * FROM musicas {where} ORDER BY titulo", params)
             rows = cur.fetchall()
             result = []
+            q_norm = remove_acentos(q).lower() if q else ''
             for r in rows:
                 m = dict(r)
                 m['tags'] = json.loads(m.get('tags') or '[]')
                 if tag and tag not in m['tags']:
                     continue
+                if q_norm:
+                    tit_norm = remove_acentos(m.get('titulo','')).lower()
+                    art_norm = remove_acentos(m.get('artista','')).lower()
+                    tom_norm = remove_acentos(m.get('tom','')).lower()
+                    if q_norm not in tit_norm and q_norm not in art_norm and q_norm not in tom_norm:
+                        continue
                 result.append(m)
             return jsonify(result)
 
@@ -728,8 +740,9 @@ def gerar_pdf(rid):
     link_st    = ParagraphStyle('LK', parent=styles['Normal'], fontSize=11, fontName='Helvetica', leading=20, textColor=DARK)
 
     def make_tabela(linhas):
+        clean_linhas = [[sanitizar_pdf(cell) for cell in row] for row in linhas]
         col_w = (A4[0] - 4*cm) / 4
-        t = Table(linhas, colWidths=[col_w]*4, rowHeights=32)
+        t = Table(clean_linhas, colWidths=[col_w]*4, rowHeights=32)
         t.setStyle(TableStyle([
             ('GRID',        (0,0), (-1,-1), 0.5, GREY_LINE),
             ('BACKGROUND',  (0,0), (-1,-1), colors.white),
@@ -798,7 +811,7 @@ def gerar_pdf(rid):
                 secao_atual = secao
                 story.append(Paragraph(secao, secao_st))
             if acordes:
-                story.append(Paragraph(acordes, acorde_st))
+                story.append(Paragraph(sanitizar_pdf(acordes), acorde_st))
             if letra:
                 story.append(Paragraph(letra, letra_st))
             if not acordes and not letra and not secao:
@@ -931,7 +944,7 @@ def pdf_musica(mid):
             secao = linha.get('secao', ''); acordes = linha.get('acordes', ''); letra = linha.get('letra', '')
             if secao and secao != secao_atual:
                 secao_atual = secao; story.append(Paragraph(secao, secao_st))
-            if acordes: story.append(Paragraph(acordes, acorde_st))
+            if acordes: story.append(Paragraph(sanitizar_pdf(acordes), acorde_st))
             if letra:   story.append(Paragraph(letra, letra_st))
         if modo == 'completo' and m['tabela']:
             story.append(Spacer(1, 0.5*cm))
