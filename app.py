@@ -2,6 +2,7 @@
 Repertório Sol Maior — Backend Flask + SQLite
 """
 import os, json, re, subprocess, sys, psycopg2, io, unicodedata
+from contextlib import contextmanager
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, send_file
@@ -28,10 +29,14 @@ def admin_required(f):
 
 
 # ─── Banco de dados ────────────────────────────────────────────────────────────
+@contextmanager
 def get_db():
     # Supabase/PostgreSQL na nuvem geralmente exige SSL
     conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, sslmode='require')
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 def init_db():
     with get_db() as conn:
@@ -97,7 +102,9 @@ NOTAS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 ENHAR = {'Db':'C#','Eb':'D#','Fb':'E','Gb':'F#','Ab':'G#','Bb':'A#','Cb':'B'}
 
 def normaliza(n):
-    return ENHAR.get(n, n)
+    if not n: return ''
+    clean = str(n).replace('♭', 'b').replace('♯', '#')
+    return ENHAR.get(clean, clean)
 
 def transpoe_acorde(acorde, st):
     if st == 0: return acorde
@@ -564,17 +571,19 @@ REGRAS IMPORTANTES:
 - tom: use notação padrão (C, Dm, G#m, Bb, etc.)."""
 
     try:
-        text = call_gemini(prompt).strip()
+        raw_text = call_gemini(prompt).strip()
+        # Extrai bloco JSON se estiver dentro de markdown ```json ... ```
+        match_block = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', raw_text)
+        text = match_block.group(1).strip() if match_block else raw_text
 
-        # Remove blocos markdown se o modelo incluir mesmo sendo pedido para não
-        text = re.sub(r'^```(?:json)?\s*', '', text)
-        text = re.sub(r'\s*```$', '', text)
-        text = text.strip()
+        # Fallback: extrai do primeiro '{' até o último '}'
+        if not text.startswith('{') and '{' in text and '}' in text:
+            text = text[text.find('{'):text.rfind('}')+1]
 
         try:
             dados = json.loads(text)
         except json.JSONDecodeError:
-            print(f"JSON inválido recebido do Gemini: {text[:500]}")
+            print(f"JSON inválido recebido do Gemini: {raw_text[:500]}")
             return jsonify({'erro': 'A IA retornou um formato inválido. Tente novamente ou adicione a cifra manualmente.'}), 500
 
         # Valida campos obrigatórios

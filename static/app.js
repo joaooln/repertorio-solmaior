@@ -36,12 +36,16 @@ async function refreshPendingBadge() {
 }
 
 // Executa todas as escritas enfileiradas em ordem
+let _isSyncing = false;
 async function syncPendingWrites() {
-  const items = await idbGetAll('pending');
-  if (!items.length) return;
+  if (_isSyncing) return;
+  _isSyncing = true;
+  try {
+    const items = await idbGetAll('pending');
+    if (!items.length) return;
 
-  toast(`🔄 Sincronizando ${items.length} alteração${items.length!==1?'ões':''}...`, 'warn');
-  let ok = 0, fail = 0;
+    toast(`🔄 Sincronizando ${items.length} alteração${items.length!==1?'ões':''}...`, 'warn');
+    let ok = 0, fail = 0;
 
   for (const item of items) {
     try {
@@ -82,6 +86,9 @@ async function syncPendingWrites() {
   // Atualiza a página com dados frescos do servidor
   if (currentPage === 'musicas') renderMusicas();
   else if (currentPage === 'repertorios') renderRepertorios();
+  } finally {
+    _isSyncing = false;
+  }
 }
 
 // Enfileira uma escrita para sync posterior
@@ -414,6 +421,13 @@ function modal(html, size='modal-md') {
      </div>`);
 }
 
+// Fecha modal com a tecla Escape
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('modal-root') && !document.getElementById('ap-root')) {
+    closeModal();
+  }
+});
+
 let pendingConfirmCallback = null;
 
 function confirm_del(msg, cb) {
@@ -670,7 +684,7 @@ function openImport() {
     </div>
     <div class="form-group">
       <label>URL da Cifra</label>
-      <input id="imp-url" type="url" placeholder="https://www.cifraclub.com.br/artista/musica/">
+      <input id="imp-url" type="url" placeholder="https://www.cifraclub.com.br/artista/musica/" onkeydown="if(event.key==='Enter')doImport()">
     </div>
     <div id="imp-msg" style="font-size:13px;color:var(--text-dim);min-height:20px;margin-bottom:10px;"></div>
     <div class="modal-footer">
@@ -819,10 +833,10 @@ function openAddManual() {
       <button class="close-btn" onclick="closeModal()">×</button>
     </div>
     <div class="form-row">
-      <div class="form-group"><label>Título</label><input id="nm-titulo" placeholder="Nome da música"></div>
-      <div class="form-group"><label>Artista</label><input id="nm-artista" placeholder="Nome do artista"></div>
+      <div class="form-group"><label>Título</label><input id="nm-titulo" placeholder="Nome da música" onkeydown="if(event.key==='Enter')doAddManual()"></div>
+      <div class="form-group"><label>Artista</label><input id="nm-artista" placeholder="Nome do artista" onkeydown="if(event.key==='Enter')doAddManual()"></div>
     </div>
-    <div class="form-group"><label>Tom</label><input id="nm-tom" placeholder="Ex: Am, D, G"></div>
+    <div class="form-group"><label>Tom</label><input id="nm-tom" placeholder="Ex: Am, D, G" onkeydown="if(event.key==='Enter')doAddManual()"></div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-primary" onclick="doAddManual()">Criar Obra →</button>
@@ -1249,7 +1263,9 @@ const JS_NOTAS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const JS_ENHAR = {'Db':'C#','Eb':'D#','Fb':'E','Gb':'F#','Ab':'G#','Bb':'A#','Cb':'B'};
 
 function jsNormaliza(n) {
-  return JS_ENHAR[n] || n;
+  if (!n) return '';
+  const clean = String(n).replace('♭', 'b').replace('♯', '#');
+  return JS_ENHAR[clean] || clean;
 }
 
 function jsTranspoeAcorde(acorde, st) {
@@ -1489,7 +1505,7 @@ async function apRepNav(dir) {
   const next = _apRepIdx + dir;
   if (next < 0 || next >= _apRepList.length) return;
   _apRepIdx = next;
-  closeApresentacao();
+  closeApresentacao(false);
   await openApresentacao(_apRepList[_apRepIdx].id);
   _renderRepNav();
 }
@@ -1525,7 +1541,7 @@ function toggleSetlistDrawer() {
 async function apRepNavTo(idx) {
   if (idx < 0 || idx >= _apRepList.length) return;
   _apRepIdx = idx;
-  closeApresentacao();
+  closeApresentacao(false);
   await openApresentacao(_apRepList[_apRepIdx].id);
   _renderRepNav();
 }
@@ -1620,6 +1636,20 @@ function apKeyHandler(e) {
     if (b) b.scrollTop -= (e.key === 'PageUp' ? 350 : 80);
     return;
   }
+  if (e.key === 'ArrowRight' || e.key === 'n' || e.key === 'N') {
+    if (_apRepList && _apRepList.length > 0) {
+      e.preventDefault();
+      apRepNav(1);
+      return;
+    }
+  }
+  if (e.key === 'ArrowLeft' || e.key === 'p' || e.key === 'P') {
+    if (_apRepList && _apRepList.length > 0) {
+      e.preventDefault();
+      apRepNav(-1);
+      return;
+    }
+  }
   if (e.key === '+' || e.key === '=' || e.key === '♯') {
     e.preventDefault(); transposeStage(1); return;
   }
@@ -1634,7 +1664,7 @@ function apKeyHandler(e) {
   }
 }
 
-function closeApresentacao() {
+function closeApresentacao(resetRep = true) {
   clearInterval(_apScrollInterval);
   clearInterval(_apMetroInterval);
   _apScrollActive = false;
@@ -1655,6 +1685,11 @@ function closeApresentacao() {
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   document.removeEventListener('keydown', apKeyHandler);
   document.getElementById('ap-root')?.remove();
+
+  if (resetRep) {
+    _apRepList = [];
+    _apRepIdx = -1;
+  }
 }
 
 // ── Stats ──────────────────────────────────────────────────────────────
@@ -1818,7 +1853,7 @@ function openNovoRep() {
     </div>
     <div class="form-group">
       <label>Nome do Evento / Lista</label>
-      <input id="rep-nome" placeholder="Ex: Casamento Especial João e Maria">
+      <input id="rep-nome" placeholder="Ex: Casamento Especial João e Maria" onkeydown="if(event.key==='Enter')doNovoRep()">
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
