@@ -601,14 +601,13 @@ button { font-family: inherit; cursor: pointer; }
   margin: 36px 0 12px; padding-bottom: 6px;
   border-bottom: 1px dashed color-mix(in oklab, var(--accent) 30%, transparent);
 }
-.ap-secao-l:first-child { margin-top: 0; }
 .ap-acorde-l {
   font-family: var(--font-m); font-weight: 700; color: var(--accent);
-  font-size: 28px; letter-spacing: 0.04em; white-space: pre; line-height: 1.4;
+  font-size: calc(28px * var(--ap-zoom, 1)); letter-spacing: 0.04em; white-space: pre; line-height: 1.4;
 }
 .ap-letra-l {
   font-family: var(--font-b); color: var(--text);
-  font-size: 26px; line-height: 1.5; letter-spacing: -0.005em; margin-bottom: 6px;
+  font-size: calc(26px * var(--ap-zoom, 1)); line-height: 1.5; letter-spacing: -0.005em; margin-bottom: 6px;
 }
 /* Metro */
 .metro {
@@ -898,8 +897,8 @@ select {
   .side { display: none; }
   .main { margin-left: 0; padding-bottom: 84px; }
   .ap-content { padding: 32px 20px 120px; }
-  .ap-acorde-l { font-size: 22px; }
-  .ap-letra-l  { font-size: 20px; }
+  .ap-acorde-l { font-size: calc(22px * var(--ap-zoom, 1)); }
+  .ap-letra-l  { font-size: calc(20px * var(--ap-zoom, 1)); }
   .two-col { grid-template-columns: 1fr; }
   .repgrid { grid-template-columns: 1fr; }
 
@@ -1217,7 +1216,7 @@ select {
   text-align: center;
   font-family: var(--font-m);
   font-weight: 700;
-  font-size: 22px;
+  font-size: calc(22px * var(--ap-zoom, 1));
   color: var(--accent);
   border-right: 1.5px solid var(--line);
   display: flex;
@@ -1232,13 +1231,13 @@ select {
 .ap-grid-cell[data-original="%"] {
   color: var(--text-faint);
   font-weight: 400;
-  font-size: 18px;
+  font-size: calc(18px * var(--ap-zoom, 1));
 }
 
 @media (max-width: 768px) {
   .ap-grid-cell {
     padding: 12px 4px;
-    font-size: 16px;
+    font-size: calc(16px * var(--ap-zoom, 1));
     min-height: 48px;
   }
 }

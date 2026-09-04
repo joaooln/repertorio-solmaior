@@ -490,10 +490,17 @@ function buildMusicasUrl() {
 }
 
 async function renderMusicas() {
-  const [allMusicas_, counts] = await Promise.all([
-    api.get(buildMusicasUrl()),
-    api.get('/api/musicas'),
-  ]);
+  const url = buildMusicasUrl();
+  let allMusicas_, counts;
+  if (url === '/api/musicas') {
+    counts = await api.get('/api/musicas');
+    allMusicas_ = counts;
+  } else {
+    [allMusicas_, counts] = await Promise.all([
+      api.get(url),
+      api.get('/api/musicas'),
+    ]);
+  }
   allMusicas = allMusicas_;
 
   const allTags = [...new Set(counts.flatMap(m => m.tags||[]))].sort();
@@ -815,6 +822,8 @@ async function doImportLote() {
   }
 
   btn.textContent = 'Concluído';
+  btn.disabled = false;
+  btn.onclick = closeModal;
   cancelBtn.disabled = false;
   cancelBtn.textContent = 'Fechar';
   await renderMusicas();
@@ -1366,12 +1375,17 @@ async function openApresentacao(id) {
   _apBpm = bpm;
 
   document.body.insertAdjacentHTML('beforeend', `
-    <div class="ap-overlay" id="ap-root">
+    <div class="ap-overlay" id="ap-root" style="--ap-zoom: ${_apZoom};">
       <div class="ap-bar">
         <button class="ap-back" onclick="closeApresentacao()">✕</button>
         <div class="ap-titles">
           <div class="ap-title">${m.titulo}</div>
           <div class="ap-artist">${m.artista}</div>
+        </div>
+        <div class="ap-zoom-container" style="display:flex;align-items:center;gap:4px;margin-right:8px;">
+          <button class="ap-btn" onclick="changeApZoom(-0.1)" title="Diminuir fonte ([)" style="width:28px;height:28px;font-size:11px;padding:0;">A-</button>
+          <span id="ap-zoom-val" style="font-size:11px;color:var(--text-dim);min-width:32px;text-align:center;font-family:var(--font-m);">${Math.round(_apZoom*100)}%</span>
+          <button class="ap-btn" onclick="changeApZoom(0.1)" title="Aumentar fonte (])" style="width:28px;height:28px;font-size:11px;padding:0;">A+</button>
         </div>
         <div class="ap-transpose-container" style="display:flex;align-items:center;gap:6px;margin-right:12px;">
           <button class="ap-btn" onclick="transposeStage(-1)" title="Transpor -1 semitom" style="width:32px;height:32px;font-size:12px;padding:0;">♭</button>
@@ -1453,6 +1467,19 @@ let _apBeat           = 0;
 let _apRepList        = [];
 let _apRepIdx         = -1;
 let _apSoloAcordes    = localStorage.getItem('apSoloAcordes') === 'true';
+let _apZoom           = parseFloat(localStorage.getItem('apZoom')) || 1.0;
+
+function changeApZoom(delta) {
+  _apZoom = Math.max(0.7, Math.min(1.8, Math.round((_apZoom + delta) * 10) / 10));
+  localStorage.setItem('apZoom', _apZoom.toString());
+  const root = document.getElementById('ap-root');
+  if (root) {
+    root.style.setProperty('--ap-zoom', _apZoom);
+  }
+  const zoomLbl = document.getElementById('ap-zoom-val');
+  if (zoomLbl) zoomLbl.textContent = `${Math.round(_apZoom * 100)}%`;
+  toast(`Tamanho da fonte: ${Math.round(_apZoom * 100)}%`);
+}
 
 function toggleApViewMode() {
   _apSoloAcordes = !_apSoloAcordes;
@@ -1661,6 +1688,12 @@ function apKeyHandler(e) {
   }
   if (e.key === 'g' || e.key === 'G') {
     e.preventDefault(); toggleApViewMode(); return;
+  }
+  if (e.key === '[' || e.key === '{') {
+    e.preventDefault(); changeApZoom(-0.1); return;
+  }
+  if (e.key === ']' || e.key === '}') {
+    e.preventDefault(); changeApZoom(0.1); return;
   }
 }
 
@@ -1897,7 +1930,7 @@ async function openEditRep(id) {
     <div class="form-group" style="margin-bottom:28px">
       <label>Modificar Nome</label>
       <div style="display:flex;gap:12px">
-        <input id="rep-edit-nome" value="${editRep.nome}" style="flex:1">
+        <input id="rep-edit-nome" value="${editRep.nome}" style="flex:1" onkeydown="if(event.key==='Enter')saveRepNome('${id}')">
         <button class="btn btn-ghost" onclick="saveRepNome('${id}')">Salvar</button>
       </div>
     </div>
@@ -1906,7 +1939,7 @@ async function openEditRep(id) {
       <!-- Músicas selecionadas -->
       <div style="background:rgba(255,255,255,0.02);border:1px solid var(--line);border-radius:var(--radius-sm);padding:16px">
         <div class="col-title">
-          <span>Setlist Atual (${(editRep.musicas||[]).length})</span>
+          <span id="rep-selected-count">Setlist Atual (${(editRep.musicas||[]).length})</span>
         </div>
         <div class="drag-list" id="drag-selected" ondragover="event.preventDefault()" ondrop="onDrop(event,'selected')">
           ${(editRep.musicas||[]).map((m,i)=>`
@@ -1930,8 +1963,8 @@ async function openEditRep(id) {
 
       <!-- Disponíveis -->
       <div style="background:rgba(255,255,255,0.02);border:1px solid var(--line);border-radius:var(--radius-sm);padding:16px">
-        <div class="col-title">Adicionar Novas (${disponiveis.length})</div>
-        <input placeholder="Buscar na biblioteca..." style="margin-bottom:16px;" oninput="filtrarDisp(this.value)">
+        <div class="col-title" id="rep-avail-count">Adicionar Novas (${disponiveis.length})</div>
+        <input placeholder="Buscar na biblioteca..." id="rep-avail-search" style="margin-bottom:16px;" oninput="filtrarDisp(this.value)">
         <div class="avail-scroll" id="avail-list">
           ${renderDisponiveis(disponiveis)}
         </div>
@@ -1971,10 +2004,43 @@ async function filtrarDisp(q) {
   });
   const el = document.getElementById('avail-list');
   if(el) el.innerHTML = renderDisponiveis(disp);
+  const countEl = document.getElementById('rep-avail-count');
+  if (countEl) countEl.textContent = `Adicionar Novas (${disp.length})`;
 }
 
 function getSelectedIds() {
   return [...document.querySelectorAll('#drag-selected .drag-item')].map(el=>el.dataset.id);
+}
+
+async function refreshEditRepLists() {
+  if (!editRep) return;
+  const selectedContainer = document.getElementById('drag-selected');
+  const countEl = document.getElementById('rep-selected-count');
+  if (countEl) countEl.textContent = `Setlist Atual (${(editRep.musicas||[]).length})`;
+  
+  if (selectedContainer) {
+    selectedContainer.innerHTML = (editRep.musicas||[]).map((m,i)=>`
+      <div class="drag-item" draggable="true" data-id="${m.id}"
+        ondragstart="dragSrc=this;this.classList.add('dragging')"
+        ondragend="this.classList.remove('dragging')">
+        <span class="drag-handle">⠿</span>
+        <div class="drag-arrows" style="display:flex;flex-direction:column;gap:1px;margin-right:2px;flex-shrink:0;">
+          <button class="btn btn-quiet btn-xs btn-icon-only" onclick="event.stopPropagation();moveSongInRep('${m.id}', -1)" title="Mover para cima" style="padding:0;width:18px;height:14px;line-height:1;font-size:8px;display:flex;align-items:center;justify-content:center;">▲</button>
+          <button class="btn btn-quiet btn-xs btn-icon-only" onclick="event.stopPropagation();moveSongInRep('${m.id}', 1)" title="Mover para baixo" style="padding:0;width:18px;height:14px;line-height:1;font-size:8px;display:flex;align-items:center;justify-content:center;">▼</button>
+        </div>
+        <div class="di-info">
+          <div class="di-title">${m.titulo}</div>
+          <div class="di-artist">${m.artista} · <span>${m.tom}</span></div>
+        </div>
+        <button class="btn btn-quiet btn-xs btn-icon-only" onclick="removerDaLista('${m.id}')" title="Remover da lista">✕</button>
+      </div>
+    `).join('') || '<div style="color:var(--text-faint);font-size:13px;text-align:center;padding:40px 0;border:1px dashed var(--line);border-radius:var(--radius-xs)">Setlist vazio. Adicione músicas →</div>';
+  }
+
+  const searchInput = document.getElementById('rep-avail-search');
+  const q = searchInput ? searchInput.value : '';
+  await filtrarDisp(q);
+  renderRepertorios();
 }
 
 async function adicionarNaLista(musicaId) {
@@ -1982,13 +2048,17 @@ async function adicionarNaLista(musicaId) {
   if(selIds.includes(musicaId)) return;
   const novas = [...selIds, musicaId];
   await api.put(`/api/repertorios/${editRep.id}`, {musicas: novas});
-  openEditRep(editRep.id);
+  const reps = await api.get('/api/repertorios');
+  editRep = reps.find(r=>r.id===editRep.id);
+  await refreshEditRepLists();
 }
 
 async function removerDaLista(musicaId) {
   const novas = getSelectedIds().filter(id=>id!==musicaId);
   await api.put(`/api/repertorios/${editRep.id}`, {musicas: novas});
-  openEditRep(editRep.id);
+  const reps = await api.get('/api/repertorios');
+  editRep = reps.find(r=>r.id===editRep.id);
+  await refreshEditRepLists();
 }
 
 async function moveSongInRep(musicaId, direction) {
@@ -2004,7 +2074,9 @@ async function moveSongInRep(musicaId, direction) {
   selIds[targetIdx] = temp;
   
   await api.put(`/api/repertorios/${editRep.id}`, {musicas: selIds});
-  openEditRep(editRep.id);
+  const reps = await api.get('/api/repertorios');
+  editRep = reps.find(r=>r.id===editRep.id);
+  await refreshEditRepLists();
 }
 
 async function saveRepNome(id) {
