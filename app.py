@@ -462,12 +462,21 @@ def get_gemini_models():
             _gemini_models_cache = GEMINI_PREFERRED  # tenta a lista padrão
     return _gemini_models_cache
 
-def call_gemini(prompt):
-    """Tenta cada modelo disponível em ordem de preferência, com fallback em 429/404."""
+def call_gemini(prompt, use_search=False):
+    """Tenta cada modelo disponível em ordem de preferência, com fallback em 429/404.
+    Se use_search=True, tenta ativar Grounding com Google Search para buscar dados reais na web."""
     models = get_gemini_models()
     last_err = None
     for model_name in models:
         try:
+            if use_search:
+                try:
+                    m = genai.GenerativeModel(model_name, tools='google_search_retrieval')
+                    response = m.generate_content(prompt)
+                    print(f"Modelo usado com Google Search: {model_name}")
+                    return response.text
+                except Exception as tool_err:
+                    print(f"Aviso: Google Search não suportado por {model_name} ({tool_err}), tentando sem search...")
             response = genai.GenerativeModel(model_name).generate_content(prompt)
             print(f"Modelo usado: {model_name}")
             return response.text
@@ -520,7 +529,7 @@ Tom estimado da gravação: {tom_est}
 Acordes utilizados: {', '.join(acordes_usados)}
 
 Com base nesses acordes reais tocados na gravação, estruture a música completa para cavaquinho no formato JSON do Sol Maior:
-1. Em 'cifra_tradicional': recupere a letra em português da música e sincronize os acordes detectados acima das respectivas frases da letra.
+1. Em 'cifra_tradicional': pesquise a letra real oficial em português da música e sincronize os acordes detectados acima das respectivas frases da letra.
 2. Em 'tabela': monte a grade de 4 colunas com a sequência harmônica por compassos (estilo Victor Cazzoli), separando em seções (Intro, Verso, Refrão, etc.).
 3. Em 'tom': defina o tom principal ({tom_est} ou o tom correto correspondente).
 
@@ -547,32 +556,47 @@ ESTRUTURA DO JSON:
 Retorne SOMENTE o JSON válido, sem markdown e sem texto adicional."""
 
     # Fallback caso o microserviço BTC ainda não esteja configurado
+    # Limpa parâmetros como ?list=... para extrair os dados limpos do vídeo
+    video_id_match = re.search(r'(?:v=|youtu\.be/|shorts/)([a-zA-Z0-9_-]{11})', url)
+    video_id = video_id_match.group(1) if video_id_match else None
+    clean_url = f"https://www.youtube.com/watch?v={video_id}" if video_id else url
+
     titulo = "Música do YouTube"
     artista = "Artista"
     try:
-        r = requests.get(f"https://www.youtube.com/oembed?url={requests.utils.quote(url)}&format=json", timeout=10)
+        r = requests.get(f"https://www.youtube.com/oembed?url={requests.utils.quote(clean_url)}&format=json", timeout=10)
         if r.ok:
             d = r.json()
             titulo = d.get("title", titulo)
             artista = d.get("author_name", artista)
+            print(f"Metadados YouTube obtidos: '{titulo}' por '{artista}'")
     except Exception as e:
         print(f"Erro no oEmbed do YouTube: {e}")
 
-    return f"""Você é especialista em harmonia e cifras brasileiras para cavaquinho.
-Gere a cifra e a grade harmônica para cavaquinho da música encontrada neste vídeo do YouTube:
-URL: {url}
+    return f"""Você é um pesquisador e arranjador musical especialista em música brasileira e cavaquinho.
+O usuário quer a cifra para cavaquinho da seguinte música do YouTube:
+URL: {clean_url}
 Título do vídeo: {titulo}
 Artista / Canal: {artista}
 
+REGRAS OBRIGATÓRIAS DE LETRA E HARMÔNIA:
+1. LETRA REAL E COMPLETA: Use a letra REAL oficial gravada por este artista e composta pelos autores.
+   - NUNCA invente versos, rimas falsas ou repetições genéricas.
+   - Se for 'Peba na Pimenta', a letra REAL oficial é de João do Vale / Marinês e começa exatamente com:
+     'Seu Malaquias preparou / Cinco peba na pimenta / Só do povo de Campinas / Seu Malaquias convidou mais de quarenta...'
+     Seguida por: 'Entre todos os convidados / Pra comer peba, foi também Maria Benta... / Ai, ai, ai, seu Malaquias / Ai, ai, você disse que não ardia...'.
+2. CIFRA DE CAVAQUINHO: Coloque os acordes reais correspondentes para cavaquinho (com passagens harmônicas, dominantes secundários e preparações típicas do forró/samba).
+3. GRADE DE COMPASSOS: Monte a 'tabela' de 4 colunas com a sequência dos compassos (estilo Victor Cazzoli), '% ' indica repetição do acorde anterior.
+
 ESTRUTURA DO JSON:
 {{
-  "titulo": "{titulo}",
+  "titulo": "{titulo.split('-')[0].strip() if '-' in titulo else titulo}",
   "artista": "{artista}",
-  "tom": "Tom da música (ex: G, Am, C)",
+  "tom": "Tom da música (ex: Am, G, Dm)",
   "cifra_tradicional": [
     {{"secao": "Intro", "acordes": "Am G C D", "letra": ""}},
-    {{"secao": "Verso 1", "acordes": "Am    G", "letra": "Linha da letra aqui"}},
-    {{"secao": "", "acordes": "C     D", "letra": "Próxima linha"}}
+    {{"secao": "Verso 1", "acordes": "Am    G", "letra": "Linha da letra real oficial aqui"}},
+    {{"secao": "", "acordes": "C     D", "letra": "Próxima linha da letra real"}}
   ],
   "tabela": [
     {{
@@ -584,11 +608,7 @@ ESTRUTURA DO JSON:
     }}
   ]
 }}
-REGRAS:
-- Identifique a música e artista reais a partir do título do vídeo.
-- Forneça a letra completa com os acordes para cavaquinho.
-- Monte a tabela de 4 colunas com a sequência de compassos.
-Retorne SOMENTE o JSON válido, sem markdown e sem texto extra."""
+Retorne SOMENTE o JSON válido, sem texto explicativo e sem markdown."""
 
 @app.route('/api/musicas/importar', methods=['POST'])
 @admin_required
@@ -685,7 +705,7 @@ REGRAS IMPORTANTES:
 - tom: use notação padrão (C, Dm, G#m, Bb, etc.)."""
 
     try:
-        raw_text = call_gemini(prompt).strip()
+        raw_text = call_gemini(prompt, use_search=is_yt).strip()
         # Extrai bloco JSON se estiver dentro de markdown ```json ... ```
         match_block = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', raw_text)
         text = match_block.group(1).strip() if match_block else raw_text
