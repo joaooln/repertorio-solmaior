@@ -686,12 +686,12 @@ function openImport() {
       <button class="close-btn" onclick="closeModal()">×</button>
     </div>
     <div class="info-box">
-      Basta colar um link do <strong>Cifra Club</strong> ou <strong>Cifras.com.br</strong> abaixo.<br>
-      A inteligência artificial fará o resto.
+      Cole um link do <strong>Cifra Club</strong>, <strong>Cifras.com.br</strong> ou <strong>YouTube</strong>.<br>
+      A inteligência artificial fará a extração/detecção dos acordes automaticamente.
     </div>
     <div class="form-group">
-      <label>URL da Cifra</label>
-      <input id="imp-url" type="url" placeholder="https://www.cifraclub.com.br/artista/musica/" onkeydown="if(event.key==='Enter')doImport()">
+      <label>URL da Cifra ou Vídeo</label>
+      <input id="imp-url" type="url" placeholder="https://www.cifraclub.com.br/... ou https://youtu.be/..." onkeydown="if(event.key==='Enter')doImport()">
     </div>
     <div id="imp-msg" style="font-size:13px;color:var(--text-dim);min-height:20px;margin-bottom:10px;"></div>
     <div class="modal-footer">
@@ -706,9 +706,14 @@ async function doImport(substituir = false) {
   if(!url) { toast('Cole uma URL', 'err'); return; }
   const btn = document.getElementById('btn-imp');
   const msg = document.getElementById('imp-msg');
+  const isYt = /youtube\.com|youtu\.be/i.test(url);
   btn.disabled = true;
   btn.innerHTML = '<span class="spin spin-sm"></span> Importando...';
-  msg.innerHTML = '<span style="color:var(--accent)">Consultando Inteligência Artificial... Isso pode levar alguns segundos.</span>';
+  if (isYt) {
+    msg.innerHTML = '<span style="color:var(--accent)">🎬 Analisando áudio do YouTube e detectando acordes com IA... Isso pode levar alguns segundos.</span>';
+  } else {
+    msg.innerHTML = '<span style="color:var(--accent)">Consultando Inteligência Artificial... Isso pode levar alguns segundos.</span>';
+  }
   try {
     const r = await api.post('/api/musicas/importar', {url, substituir});
     if(r.erro) throw new Error(r.erro);
@@ -746,7 +751,7 @@ function openImportLote() {
       <button class="close-btn" onclick="closeModal()">×</button>
     </div>
     <div class="info-box">
-      Cole um link por linha do <strong>Cifra Club</strong> ou <strong>Cifras.com.br</strong>.<br>
+      Cole um link por linha do <strong>Cifra Club</strong>, <strong>Cifras.com.br</strong> ou <strong>YouTube</strong>.<br>
       Cada cifra será importada automaticamente pela IA.
     </div>
     <div class="form-group">

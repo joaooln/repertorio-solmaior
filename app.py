@@ -480,6 +480,116 @@ def call_gemini(prompt):
             raise
     raise last_err
 
+def extrair_prompt_youtube(url):
+    """Consulta o microserviço BTC ou metadados oEmbed e monta o prompt do Gemini para YouTube."""
+    chord_detector_url = os.environ.get("CHORD_DETECTOR_URL")
+    audio_data = None
+
+    if chord_detector_url:
+        try:
+            print(f"Chamando microserviço BTC em {chord_detector_url}...")
+            resp = requests.post(
+                f"{chord_detector_url.rstrip('/')}/predict_youtube",
+                json={"url": url},
+                timeout=120
+            )
+            if resp.ok:
+                audio_data = resp.json()
+                print("Acordes detectados pelo microserviço BTC com sucesso!")
+            else:
+                print(f"Microserviço BTC retornou status {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            print(f"Aviso: Não foi possível conectar ao microserviço BTC ({e}).")
+
+    if audio_data and audio_data.get("ok"):
+        titulo = audio_data.get("titulo", "Música do YouTube")
+        artista = audio_data.get("artista", "Artista")
+        tom_est = audio_data.get("tom_estimado", "C")
+        acordes_usados = audio_data.get("acordes_usados", [])
+        timeline = audio_data.get("timeline", [])
+        linhas_timeline = [f"{item['inicio']}s a {item['fim']}s: {item['acorde']}" for item in timeline[:80]]
+        texto_timeline = "\n".join(linhas_timeline)
+
+        return f"""Você é especialista em harmonia e cifras brasileiras para cavaquinho.
+O modelo de áudio neural BTC analisou a gravação do YouTube '{titulo}' ({artista}) e detectou a seguinte sequência temporal de acordes REAIS tocados na gravação:
+
+ACORDES REAIS DETECTADOS NO ÁUDIO:
+{texto_timeline}
+
+Tom estimado da gravação: {tom_est}
+Acordes utilizados: {', '.join(acordes_usados)}
+
+Com base nesses acordes reais tocados na gravação, estruture a música completa para cavaquinho no formato JSON do Sol Maior:
+1. Em 'cifra_tradicional': recupere a letra em português da música e sincronize os acordes detectados acima das respectivas frases da letra.
+2. Em 'tabela': monte a grade de 4 colunas com a sequência harmônica por compassos (estilo Victor Cazzoli), separando em seções (Intro, Verso, Refrão, etc.).
+3. Em 'tom': defina o tom principal ({tom_est} ou o tom correto correspondente).
+
+ESTRUTURA DO JSON:
+{{
+  "titulo": "{titulo}",
+  "artista": "{artista}",
+  "tom": "{tom_est}",
+  "cifra_tradicional": [
+    {{"secao": "Intro", "acordes": "Am G C D", "letra": ""}},
+    {{"secao": "Verso 1", "acordes": "Am    G", "letra": "Linha da letra aqui"}},
+    {{"secao": "", "acordes": "C     D", "letra": "Próxima linha"}}
+  ],
+  "tabela": [
+    {{
+      "nome_secao": "Intro / Verso",
+      "grid": [
+        ["Am", "%", "G", "C"],
+        ["F", "G", "%", "Am"]
+      ]
+    }}
+  ]
+}}
+Retorne SOMENTE o JSON válido, sem markdown e sem texto adicional."""
+
+    # Fallback caso o microserviço BTC ainda não esteja configurado
+    titulo = "Música do YouTube"
+    artista = "Artista"
+    try:
+        r = requests.get(f"https://www.youtube.com/oembed?url={requests.utils.quote(url)}&format=json", timeout=10)
+        if r.ok:
+            d = r.json()
+            titulo = d.get("title", titulo)
+            artista = d.get("author_name", artista)
+    except Exception as e:
+        print(f"Erro no oEmbed do YouTube: {e}")
+
+    return f"""Você é especialista em harmonia e cifras brasileiras para cavaquinho.
+Gere a cifra e a grade harmônica para cavaquinho da música encontrada neste vídeo do YouTube:
+URL: {url}
+Título do vídeo: {titulo}
+Artista / Canal: {artista}
+
+ESTRUTURA DO JSON:
+{{
+  "titulo": "{titulo}",
+  "artista": "{artista}",
+  "tom": "Tom da música (ex: G, Am, C)",
+  "cifra_tradicional": [
+    {{"secao": "Intro", "acordes": "Am G C D", "letra": ""}},
+    {{"secao": "Verso 1", "acordes": "Am    G", "letra": "Linha da letra aqui"}},
+    {{"secao": "", "acordes": "C     D", "letra": "Próxima linha"}}
+  ],
+  "tabela": [
+    {{
+      "nome_secao": "Intro / Verso",
+      "grid": [
+        ["Am", "%", "G", "C"],
+        ["F", "G", "%", "Am"]
+      ]
+    }}
+  ]
+}}
+REGRAS:
+- Identifique a música e artista reais a partir do título do vídeo.
+- Forneça a letra completa com os acordes para cavaquinho.
+- Monte a tabela de 4 colunas com a sequência de compassos.
+Retorne SOMENTE o JSON válido, sem markdown e sem texto extra."""
+
 @app.route('/api/musicas/importar', methods=['POST'])
 @admin_required
 def importar_musica():
@@ -504,30 +614,34 @@ def importar_musica():
 
     genai.configure(api_key=api_key)
 
-    try:
-        conteudo_web = get_web_content(url)
-    except ProxyFetchError as e:
-        print(f"ProxyFetchError ao buscar {url}: {e.status_code}")
-        if e.status_code in (429, 503):
-            return jsonify({'erro': f'O proxy de leitura (Jina Reader) está temporariamente sobrecarregado (HTTP {e.status_code}). Aguarde alguns segundos e tente de novo, ou configure JINA_API_KEY pra ter limite maior.'}), 429
-        return jsonify({'erro': f'O proxy de leitura falhou (HTTP {e.status_code}). Tente novamente.'}), 502
-    except requests.HTTPError as e:
-        sc = e.response.status_code if e.response is not None else '?'
-        print(f"HTTPError ao buscar {url}: {sc}")
-        return jsonify({'erro': f'O site bloqueou a requisição (HTTP {sc}). Cifra Club costuma bloquear IPs de servidores cloud; tente rodar localmente ou adicione manualmente.'}), 400
-    except requests.RequestException as e:
-        print(f"RequestException ao buscar {url}: {e}")
-        return jsonify({'erro': f'Falha de rede ao acessar a URL: {e}'}), 400
-    except Exception as e:
-        print(f"Erro inesperado ao buscar {url}: {e}")
-        return jsonify({'erro': f'Erro inesperado: {e}'}), 500
+    is_yt = bool(re.search(r'(youtube\.com/(watch\?v=|shorts/)|youtu\.be/)', url.lower()))
+    if is_yt:
+        prompt = extrair_prompt_youtube(url)
+    else:
+        try:
+            conteudo_web = get_web_content(url)
+        except ProxyFetchError as e:
+            print(f"ProxyFetchError ao buscar {url}: {e.status_code}")
+            if e.status_code in (429, 503):
+                return jsonify({'erro': f'O proxy de leitura (Jina Reader) está temporariamente sobrecarregado (HTTP {e.status_code}). Aguarde alguns segundos e tente de novo, ou configure JINA_API_KEY pra ter limite maior.'}), 429
+            return jsonify({'erro': f'O proxy de leitura falhou (HTTP {e.status_code}). Tente novamente.'}), 502
+        except requests.HTTPError as e:
+            sc = e.response.status_code if e.response is not None else '?'
+            print(f"HTTPError ao buscar {url}: {sc}")
+            return jsonify({'erro': f'O site bloqueou a requisição (HTTP {sc}). Cifra Club costuma bloquear IPs de servidores cloud; tente rodar localmente ou adicione manualmente.'}), 400
+        except requests.RequestException as e:
+            print(f"RequestException ao buscar {url}: {e}")
+            return jsonify({'erro': f'Falha de rede ao acessar a URL: {e}'}), 400
+        except Exception as e:
+            print(f"Erro inesperado ao buscar {url}: {e}")
+            return jsonify({'erro': f'Erro inesperado: {e}'}), 500
 
-    if not conteudo_web:
-        return jsonify({'erro': 'Página carregou mas não foi possível extrair conteúdo dela.'}), 400
+        if not conteudo_web:
+            return jsonify({'erro': 'Página carregou mas não foi possível extrair conteúdo dela.'}), 400
 
-    print(f"Conteúdo extraído ({len(conteudo_web)} chars): {conteudo_web[:300]}")
+        print(f"Conteúdo extraído ({len(conteudo_web)} chars): {conteudo_web[:300]}")
 
-    prompt = f"""Você é especialista em cifras musicais brasileiras para cavaquinho.
+        prompt = f"""Você é especialista em cifras musicais brasileiras para cavaquinho.
 Extraia os dados da música do CONTEÚDO abaixo e retorne SOMENTE um JSON válido, sem markdown, sem texto extra.
 
 URL: {url}

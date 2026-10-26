@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+yt-dlp
+torch
+torchaudio
+numpy
+librosa
+soundfile
+transformers
+huggingface_hub
