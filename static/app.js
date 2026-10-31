@@ -1637,7 +1637,10 @@ async function doImportBackup(input) {
     const r = await api.post('/api/biblioteca/import', data);
     if(r.erro) throw new Error(r.erro);
     closeModal();
-    toast(`✅ ${r.importadas} música${r.importadas!==1?'s':''} importada${r.importadas!==1?'s':''}${r.puladas?' ('+r.puladas+' já existiam)':''}`);
+    const partes = [`${r.importadas} música${r.importadas!==1?'s':''} importada${r.importadas!==1?'s':''}`];
+    if (r.restauradas) partes.push(`${r.restauradas} com cifra restaurada`);
+    if (r.puladas) partes.push(`${r.puladas} já completa${r.puladas!==1?'s':''}`);
+    toast('✅ ' + partes.join(' · '));
     renderMusicas();
   } catch(e) { toast('❌ '+e.message,'err'); }
   finally { unload(); }

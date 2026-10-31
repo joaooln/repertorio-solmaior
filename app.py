@@ -1293,6 +1293,15 @@ def exportar_biblioteca():
     buf = io.BytesIO(data.encode('utf-8'))
     return send_file(buf, as_attachment=True, download_name='backup_solmaior.json', mimetype='application/json')
 
+def campo_backup(m, campo, campo_json):
+    # Backups do cache offline trazem os campos como string JSON (cifra_json, tabela_json)
+    v = m.get(campo)
+    if v is None: v = m.get(campo_json)
+    if isinstance(v, str):
+        try: v = json.loads(v or '[]')
+        except ValueError: v = []
+    return v or []
+
 @app.route('/api/biblioteca/import', methods=['POST'])
 @admin_required
 def importar_biblioteca():
@@ -1301,22 +1310,39 @@ def importar_biblioteca():
         musicas = data.get('musicas', [])
         reps    = data.get('repertorios', [])
         n = now_iso()
-        imported, skipped = 0, 0
+        imported, skipped, restored = 0, 0, 0
         with get_db() as conn:
             with conn.cursor() as cur:
                 for m in musicas:
-                    cur.execute("SELECT id FROM musicas WHERE id=%s", (m['id'],))
-                    if cur.fetchone():
-                        skipped += 1; continue
+                    cifra  = campo_backup(m, 'cifra_tradicional', 'cifra_json')
+                    tabela = campo_backup(m, 'tabela', 'tabela_json')
+                    tags   = campo_backup(m, 'tags', 'tags')
+                    cur.execute("SELECT cifra_json, tabela_json FROM musicas WHERE id=%s", (m['id'],))
+                    row = cur.fetchone()
+                    if row:
+                        # Preenche só o que está vazio no banco; nunca sobrescreve edições
+                        sets = {}
+                        if cifra and not json.loads(row['cifra_json'] or '[]'):
+                            sets['cifra_json'] = json.dumps(cifra, ensure_ascii=False)
+                        if tabela and not json.loads(row['tabela_json'] or '[]'):
+                            sets['tabela_json'] = json.dumps(tabela, ensure_ascii=False)
+                        if sets:
+                            cur.execute(
+                                f"UPDATE musicas SET {', '.join(f'{k}=%s' for k in sets)}, atualizado_em=%s WHERE id=%s",
+                                (*sets.values(), n, m['id']))
+                            restored += 1
+                        else:
+                            skipped += 1
+                        continue
                     cur.execute("""INSERT INTO musicas
                         (id,titulo,artista,tom,tom_original,cifra_json,tabela_json,url_origem,
                          favorito,tags,bpm,duracao_min,notas,criado_em,atualizado_em)
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                        (m['id'], m['titulo'], m['artista'], m.get('tom','C'), m.get('tom_original','C'),
-                         json.dumps(m.get('cifra_tradicional',[]), ensure_ascii=False),
-                         json.dumps(m.get('tabela',[]), ensure_ascii=False),
+                        (m['id'], m['titulo'], m['artista'], m.get('tom','C'), m.get('tom_original') or m.get('tom','C'),
+                         json.dumps(cifra, ensure_ascii=False),
+                         json.dumps(tabela, ensure_ascii=False),
                          m.get('url_origem'), m.get('favorito', False),
-                         json.dumps(m.get('tags',[]), ensure_ascii=False),
+                         json.dumps(tags, ensure_ascii=False),
                          m.get('bpm'), m.get('duracao_min'), m.get('notas',''),
                          m.get('criado_em', n), m.get('atualizado_em', n)))
                     imported += 1
@@ -1325,13 +1351,15 @@ def importar_biblioteca():
                     if cur.fetchone(): continue
                     cur.execute("INSERT INTO repertorios (id,nome,criado_em,atualizado_em) VALUES (%s,%s,%s,%s)",
                                 (r['id'], r['nome'], r.get('criado_em', n), r.get('atualizado_em', n)))
-                    for i, mid in enumerate(r.get('musicas_ids', [])):
+                    ids = r.get('musicas_ids') or [
+                        x['id'] for x in sorted(r.get('musicas', []), key=lambda x: x.get('posicao', 0))]
+                    for i, mid in enumerate(ids):
                         cur.execute("SELECT id FROM musicas WHERE id=%s", (mid,))
                         if cur.fetchone():
                             cur.execute("""INSERT INTO repertorio_musicas (repertorio_id,musica_id,posicao)
                                 VALUES (%s,%s,%s) ON CONFLICT DO NOTHING""", (r['id'], mid, i))
             conn.commit()
-        return jsonify({'ok': True, 'importadas': imported, 'puladas': skipped})
+        return jsonify({'ok': True, 'importadas': imported, 'restauradas': restored, 'puladas': skipped})
     except Exception as e:
         return jsonify({'erro': str(e)}), 400
 
