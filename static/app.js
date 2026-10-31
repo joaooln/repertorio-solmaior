@@ -3,6 +3,21 @@ function removeAccents(str) {
   return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function escAttr(s) {
+  return escHtml(s).replace(/"/g, '&quot;');
+}
+
+const CHORD_TOKEN_RE = /^[A-G][#b]?(?:maj|min|dim|aug|sus|add|m|M|º|°|\+)?(?:[0-9]{1,2}|M|[#b+-][0-9]{1,2}|sus[0-9]?|add[0-9]{1,2}|dim|\([^)]*\))*(?:\/[A-G][#b]?)?$/;
+
+function isChordLine(linha) {
+  const tokens = linha.trim().split(/\s+/);
+  return tokens[0] !== '' && tokens.every(t =>
+    CHORD_TOKEN_RE.test(t) || ['|', '%', '-'].includes(t) || /^\(?x\d+\)?$/i.test(t));
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // OFFLINE / SYNC
 // ══════════════════════════════════════════════════════════════════════
@@ -246,7 +261,7 @@ const api = {
             titulo: d.titulo,
             artista: d.artista,
             tom: d.tom || 'C',
-            tom_original: d.tom || 'C',
+            tom_original: d.tom_original || d.tom || 'C',
             cifra_json: JSON.stringify(d.cifra_tradicional || []),
             tabela_json: JSON.stringify(d.tabela || []),
             tags: JSON.stringify(d.tags || []),
@@ -405,9 +420,19 @@ function loading(msg='Carregando...') {
 }
 function unload() { document.getElementById('loading')?.remove(); }
 
+let _modalGuard = null;
+
+function requestCloseModal() {
+  if (_modalGuard && !_modalGuard()) return;
+  closeModal();
+}
+
 function closeModal() {
+  _modalGuard = null;
   const modal = document.getElementById('modal-root');
   if (modal) {
+    modal.removeAttribute('id');
+    modal.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
     modal.style.opacity = '0';
     setTimeout(() => modal.remove(), 300);
   }
@@ -416,7 +441,7 @@ function closeModal() {
 function modal(html, size='modal-md') {
   closeModal();
   document.body.insertAdjacentHTML('beforeend',
-    `<div class="overlay" id="modal-root" onclick="if(event.target===this)closeModal()">
+    `<div class="overlay" id="modal-root" onclick="if(event.target===this)requestCloseModal()">
        <div class="modal ${size}">${html}</div>
      </div>`);
 }
@@ -424,7 +449,7 @@ function modal(html, size='modal-md') {
 // Fecha modal com a tecla Escape
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && document.getElementById('modal-root') && !document.getElementById('ap-root')) {
-    closeModal();
+    requestCloseModal();
   }
 });
 
@@ -597,6 +622,7 @@ async function renderMusicas() {
       </div>
       <div class="page-actions">
         <button class="btn btn-ghost btn-sm" onclick="openImport()">✦ Importar via link</button>
+        <button class="btn btn-ghost btn-sm" onclick="openImportPDF()">📄 Importar PDF (Moises)</button>
         <button class="btn btn-ghost btn-sm" onclick="openImportLote()">Importar em lote</button>
         <button class="btn btn-ghost btn-sm" onclick="openBackup()">Backup</button>
         <button class="btn btn-primary" onclick="openAddManual()">+ Nova música</button>
@@ -839,6 +865,147 @@ async function doImportLote() {
   toast(partes.join(', '), ok > 0 ? 'ok' : (skip > 0 ? 'ok' : 'err'));
 }
 
+// ── Importar PDF (Moises) ──────────────────────────────────────────────
+let _filaImport = [];
+let _filaTotal = 0;
+let _biblioteca = [];
+
+function normTxt(s) {
+  return removeAccents(s || '').toLowerCase().trim();
+}
+
+function openImportPDF() {
+  modal(`
+    <div class="modal-header">
+      <h3 class="modal-title">📄 Importar PDF do Moises</h3>
+      <button class="close-btn" onclick="closeModal()">×</button>
+    </div>
+    <div class="info-box">
+      Use o PDF de <strong>acordes</strong> exportado pelo <strong>Moises</strong>.<br>
+      Pode escolher vários de uma vez — cada música abre no editor para você revisar <strong>antes de salvar</strong>.
+    </div>
+    <div class="dropzone" id="pdf-drop" onclick="document.getElementById('pdf-input').click()"
+         ondragover="event.preventDefault();this.classList.add('over')"
+         ondragleave="this.classList.remove('over')"
+         ondrop="event.preventDefault();this.classList.remove('over');lerPDFs(event.dataTransfer.files)">
+      <input type="file" id="pdf-input" accept="application/pdf,.pdf" multiple hidden onchange="lerPDFs(this.files)">
+      <div class="dropzone-ico">⬆</div>
+      <div class="dropzone-t">Arraste os PDFs aqui ou <span>escolha os arquivos</span></div>
+      <div class="dropzone-s">Arquivos “… chords.pdf” gerados pelo Moises.ai</div>
+    </div>
+    <div id="pdf-progress" class="import-progress" style="display:none"></div>
+    <div class="modal-footer" id="pdf-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`, 'modal-md');
+}
+
+function lerArquivoBase64(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(file);
+  });
+}
+
+async function lerPDFs(fileList) {
+  const files = [...fileList].filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+  if (!files.length) { toast('Selecione arquivos PDF', 'err'); return; }
+  const prog = document.getElementById('pdf-progress');
+  document.getElementById('pdf-drop').style.display = 'none';
+  prog.style.display = 'block';
+  prog.innerHTML = files.map((f, i) => `
+    <div class="import-row">
+      <span class="import-ico" id="pdf-ico-${i}"><span class="spin spin-sm"></span></span>
+      <span class="import-name" title="${escAttr(f.name)}">${escHtml(f.name)}</span>
+      <span class="import-status" id="pdf-st-${i}">Lendo…</span>
+    </div>`).join('');
+
+  try { _biblioteca = await api.get('/api/musicas'); } catch(e) { _biblioteca = []; }
+
+  const lidas = [];
+  for (let i = 0; i < files.length; i++) {
+    const ico = document.getElementById(`pdf-ico-${i}`);
+    const st  = document.getElementById(`pdf-st-${i}`);
+    try {
+      const conteudo = await lerArquivoBase64(files[i]);
+      const r = await api.post('/api/musicas/importar-pdf', { conteudo });
+      if (r.erro) throw new Error(r.erro);
+      r._arquivo = files[i].name;
+      lidas.push(r);
+      ico.textContent = '✅';
+      st.style.color = 'var(--green)';
+      st.textContent = `${r.titulo} · ${r.tom}`;
+    } catch(e) {
+      ico.textContent = '❌';
+      st.style.color = 'var(--red)';
+      st.title = e.message;
+      st.textContent = e.message;
+    }
+  }
+  if (!lidas.length) return;
+  _filaImport = lidas;
+  _filaTotal = lidas.length;
+  if (lidas.length === files.length) { setTimeout(abrirProximaRevisao, 500); return; }
+  document.getElementById('pdf-footer').innerHTML = `
+    <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-primary" onclick="abrirProximaRevisao()">Revisar ${lidas.length} música${lidas.length>1?'s':''} →</button>`;
+}
+
+function abrirProximaRevisao() {
+  const d = _filaImport.shift();
+  if (!d) { _filaTotal = 0; renderMusicas(); return; }
+  let { titulo, artista } = d;
+  const artistas = new Set(_biblioteca.map(m => normTxt(m.artista)));
+  if (artistas.has(normTxt(titulo)) && !artistas.has(normTxt(artista))) [titulo, artista] = [artista, titulo];
+  editM = {
+    id: null, titulo, artista, tom: d.tom, tom_original: d.tom,
+    cifra_tradicional: d.cifra_tradicional,
+    tabela: gerarGradeDaCifra(d.cifra_tradicional),
+    tags: [], notas: '', favorito: false, bpm: null, duracao_min: null,
+    _fonte: d._arquivo || d.titulo_pdf,
+  };
+  editTab = 'cifra';
+  _editDirty = true;
+  renderEditModal();
+}
+
+function trocarTituloArtista() {
+  collectEdits();
+  [editM.titulo, editM.artista] = [editM.artista, editM.titulo];
+  renderEditModal();
+}
+
+function gerarGradeDaCifra(cifra) {
+  const secoes = [];
+  let atual = null;
+  for (const l of cifra || []) {
+    if (l.secao || !atual) {
+      atual = { nome: l.secao || 'Intro', acordes: [] };
+      secoes.push(atual);
+    }
+    for (const tk of (l.acordes || '').split(/\s+/)) {
+      if (CHORD_TOKEN_RE.test(tk) && atual.acordes[atual.acordes.length - 1] !== tk) atual.acordes.push(tk);
+    }
+  }
+  const tabela = [], vistos = new Set(), contagem = {};
+  for (const s of secoes) {
+    if (!s.acordes.length) continue;
+    const grid = [];
+    for (let i = 0; i < s.acordes.length; i += 4) {
+      const row = s.acordes.slice(i, i + 4);
+      while (row.length < 4) row.push('%');
+      grid.push(row);
+    }
+    const chave = s.nome + JSON.stringify(grid);
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    contagem[s.nome] = (contagem[s.nome] || 0) + 1;
+    tabela.push({ nome_secao: contagem[s.nome] > 1 ? `${s.nome} ${contagem[s.nome]}` : s.nome, grid });
+  }
+  return tabela;
+}
+
 // ── Adicionar manual ───────────────────────────────────────────────────
 function openAddManual() {
   modal(`
@@ -868,7 +1035,7 @@ async function doAddManual() {
     if(r.erro) throw new Error(r.erro);
     closeModal();
     await renderMusicas();
-    setTimeout(() => openEdit(r.id), 200);
+    setTimeout(() => openEdit(r.id, 'cifra'), 200);
   } catch(e) {
     toast('❌ ' + e.message, 'err');
   }
@@ -877,35 +1044,69 @@ async function doAddManual() {
 // ── Editar música ──────────────────────────────────────────────────────
 let editM = null;
 let editTab = 'info';
+let _editDirty = false;
+let _editPreview = false;
+let _previewTimer = null;
+
+const SECOES_CIFRA = ['Intro', 'Verso', 'Pré-Refrão', 'Refrão', 'Ponte', 'Solo', 'Final'];
 
 async function openEdit(id, tab='info') {
   editTab = tab;
   const m = await api.get(`/api/musicas/${id}`);
   editM = m;
+  _editDirty = false;
   renderEditModal();
 }
 
-function renderEditModal() {
-  const m = editM;
-  const cifraText = (m.cifra_tradicional||[]).map(l => {
+function cifraParaTexto(cifra) {
+  return (cifra||[]).map((l, i) => {
     let s = '';
-    if(l.secao) s += `[${l.secao}]\n`;
+    if(l.secao)   s += `${i ? '\n' : ''}[${l.secao}]\n`;
     if(l.acordes) s += l.acordes + '\n';
     if(l.letra)   s += l.letra   + '\n';
     return s;
   }).join('');
+}
 
-  const tabelaText = (m.tabela||[]).map(s =>
-    `\n## ${s.nome_secao}\n` + (s.grid||[]).map(r=>r.join(' | ')).join('\n')
-  ).join('\n');
+function tabelaParaTexto(tabela) {
+  return (tabela||[]).map(s =>
+    `## ${s.nome_secao}\n` + (s.grid||[]).map(r=>r.join(' | ')).join('\n')
+  ).join('\n\n');
+}
 
+function renderEditModal() {
+  const m = editM;
+  const novo = !m.id;
   const diffSt = semitonesDiff(m.tom_original, m.tom);
+  const dup = novo ? _biblioteca.find(b => normTxt(b.titulo) === normTxt(m.titulo)) : null;
+  const posFila = _filaTotal > 1 ? `<span class="fila-badge">${_filaTotal - _filaImport.length} de ${_filaTotal}</span>` : '';
+  const transpRow = `
+    <span class="tom-badge" id="tom-disp">${escHtml(m.tom)}</span>
+    <button class="btn btn-ghost btn-sm" onclick="doTransp(-1)">♭ −1</button>
+    <button class="btn btn-ghost btn-sm" onclick="doTransp(+1)">♯ +1</button>
+    ${diffSt!==0 ? `<button class="btn btn-ghost btn-sm" onclick="doTransp(0,true)">↺ Voltar p/ ${escHtml(m.tom_original)}</button>` : ''}`;
 
   modal(`
+    <span data-edit hidden></span>
     <div class="modal-header">
-      <h3 class="modal-title">✏️ ${m.titulo}</h3>
-      <button class="close-btn" onclick="closeModal()">×</button>
+      <h3 class="modal-title">${novo ? '📄 Revisar importação' : '✏️ ' + escHtml(m.titulo)} ${novo ? posFila : ''}</h3>
+      <button class="close-btn" onclick="requestCloseModal()">×</button>
     </div>
+
+    ${novo ? `
+      <div class="info-box">
+        <strong>Nada foi salvo ainda.</strong> Confira título, artista e cifra, ajuste o que precisar e clique em <strong>Salvar na biblioteca</strong>.
+        ${m._fonte ? `<div class="import-fonte">Arquivo: ${escHtml(m._fonte)}</div>` : ''}
+      </div>
+      ${dup ? `<div class="warn-box">⚠️ Já existe <strong>“${escHtml(dup.titulo)}”</strong> — ${escHtml(dup.artista)} na biblioteca. Se for a mesma, clique em Descartar.</div>` : ''}
+      <div class="quick-info">
+        <div class="form-group"><label>Título</label><input id="e-titulo" value="${escAttr(m.titulo)}" placeholder="Nome da música"></div>
+        <button class="btn btn-ghost btn-sm quick-swap" onclick="trocarTituloArtista()" title="Inverter título e artista">⇄</button>
+        <div class="form-group"><label>Artista</label><input id="e-artista" value="${escAttr(m.artista)}" placeholder="Nome do artista"></div>
+        <div class="form-group quick-tom"><label>Tom</label><input id="e-tom" value="${escAttr(m.tom)}"></div>
+      </div>
+    ` : ''}
+
     <div class="tabs">
       <button class="tab ${editTab==='info'?'active':''}"   onclick="switchTab('info')">Informações</button>
       <button class="tab ${editTab==='cifra'?'active':''}"  onclick="switchTab('cifra')">Cifra Completa</button>
@@ -913,15 +1114,17 @@ function renderEditModal() {
     </div>
 
     ${editTab==='info' ? `
+      ${novo ? '' : `
+        <div class="form-row">
+          <div class="form-group"><label>Título</label><input id="e-titulo" value="${escAttr(m.titulo)}"></div>
+          <div class="form-group"><label>Artista</label><input id="e-artista" value="${escAttr(m.artista)}"></div>
+        </div>`}
       <div class="form-row">
-        <div class="form-group"><label>Título</label><input id="e-titulo" value="${m.titulo}"></div>
-        <div class="form-group"><label>Artista</label><input id="e-artista" value="${m.artista}"></div>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Tom Original</label>
-          <input id="e-tom-orig" value="${m.tom_original}">
-        </div>
+        ${novo ? '' : `
+          <div class="form-group">
+            <label>Tom Original</label>
+            <input id="e-tom-orig" value="${escAttr(m.tom_original)}">
+          </div>`}
         <div class="form-group">
           <label>BPM</label>
           <input id="e-bpm" type="number" min="40" max="300" placeholder="Ex: 120" value="${m.bpm||''}">
@@ -933,13 +1136,8 @@ function renderEditModal() {
       </div>
       <div class="form-group">
         <label>Transposição (Tom Atual)</label>
-        <div class="transp-row">
-          <span class="tom-badge" id="tom-disp">${m.tom}</span>
-          <button class="btn btn-ghost btn-sm" onclick="doTransp(-1)">♭ −1</button>
-          <button class="btn btn-ghost btn-sm" onclick="doTransp(+1)">♯ +1</button>
-          <button class="btn btn-ghost btn-sm" onclick="doTransp(0,true)">↺ Resetar</button>
-        </div>
-        ${diffSt!==0 ? `<div style="font-size:12px;color:var(--text-dim);margin-top:4px;">Transposto ${diffSt>0?'+':''}${diffSt} semitons do original (${m.tom_original})</div>` : ''}
+        <div class="transp-row">${transpRow}</div>
+        ${diffSt!==0 ? `<div style="font-size:12px;color:var(--text-dim);margin-top:4px;">Transposto ${diffSt>0?'+':''}${diffSt} semitons do original (${escHtml(m.tom_original)})</div>` : ''}
       </div>
       <div class="form-group">
         <label>Estilos / Tags</label>
@@ -953,7 +1151,7 @@ function renderEditModal() {
       </div>
       <div class="form-group">
         <label>Notas / Observações</label>
-        <textarea id="e-notas" rows="2" placeholder="Ex: Entrar depois do intro, repetir refrão no final...">${m.notas||''}</textarea>
+        <textarea id="e-notas" rows="2" placeholder="Ex: Entrar depois do intro, repetir refrão no final...">${escHtml(m.notas||'')}</textarea>
       </div>
       <div class="form-group" style="display:flex;align-items:center;gap:10px;">
         <label style="margin:0;cursor:pointer;display:flex;align-items:center;gap:8px;">
@@ -964,18 +1162,31 @@ function renderEditModal() {
       ${m.url_origem ? `
         <div class="form-group">
           <label>URL de origem</label>
-          <input value="${m.url_origem}" readonly style="opacity:0.6;">
+          <input value="${escAttr(m.url_origem)}" readonly style="opacity:0.6;">
         </div>` : ''}
     ` : ''}
 
     ${editTab==='cifra' ? `
-      <div class="info-box">
-        <strong>[Seção]</strong> marca uma parte da música (Verso, Refrão…).<br>
-        A linha de <strong>acordes</strong> vem logo antes da linha contendo a <strong>letra</strong> correspondente.
+      <div class="cifra-toolbar">
+        <div class="tb-group">
+          <span class="tb-label">Inserir seção</span>
+          ${SECOES_CIFRA.map(s=>`<button class="tb-btn" onclick="inserirSecao('${s}')">${s}</button>`).join('')}
+        </div>
+        <div class="tb-group">
+          <span class="tb-label">Tom <b>${escHtml(m.tom)}</b></span>
+          <button class="tb-btn" onclick="doTransp(-1)" title="Descer meio tom">♭ −1</button>
+          <button class="tb-btn" onclick="doTransp(+1)" title="Subir meio tom">♯ +1</button>
+          <button class="tb-btn tb-preview-toggle ${_editPreview?'on':''}" onclick="togglePreviewCifra()">${_editPreview ? '✎ Editar' : '👁 Visualizar'}</button>
+        </div>
       </div>
-      <div class="form-group">
-        <label>Editor de Cifra</label>
-        <textarea id="e-cifra" style="min-height:400px;font-size:14px;">${cifraText}</textarea>
+      <div class="cifra-editor ${_editPreview ? 'show-preview' : ''}">
+        <textarea id="e-cifra" class="cifra-textarea" wrap="off" spellcheck="false"
+          oninput="agendarPreviewCifra()" onkeydown="teclaEditorCifra(event)">${escHtml(cifraParaTexto(m.cifra_tradicional))}</textarea>
+        <div class="cifra-preview" id="cifra-preview">${renderCifraHtml(m.cifra_tradicional)}</div>
+      </div>
+      <div class="editor-hint">
+        <b>[Seção]</b> abre uma parte · a linha de <b>acordes</b> fica logo acima da <b>letra</b> — alinhe com espaços e confira na prévia.
+        <span class="editor-keys"><kbd>Tab</kbd> insere espaços · <kbd>Ctrl/⌘ S</kbd> salva</span>
       </div>
     ` : ''}
 
@@ -985,18 +1196,39 @@ function renderEditModal() {
         Acordes separados por <strong>|</strong>, sendo 4 por linha sempre. Utilize <strong>%</strong> para repetir compasso.
       </div>
       <div class="form-group">
-        <label>Editor de Tabela de Acordes</label>
-        <textarea id="e-tabela" style="min-height:400px;font-size:14px;">${tabelaText}</textarea>
+        <div class="tb-row">
+          <label>Editor de Tabela de Acordes</label>
+          <button class="tb-btn" onclick="gerarGradeEditor()">↻ Gerar a partir da cifra</button>
+        </div>
+        <textarea id="e-tabela" class="cifra-textarea" spellcheck="false" style="min-height:400px;">${escHtml(tabelaParaTexto(m.tabela))}</textarea>
       </div>
     ` : ''}
 
     <div class="modal-footer">
-      <button class="btn btn-danger btn-sm" onclick="delMusica('${m.id}','${m.titulo.replace(/'/g,"\\'")}',true)">🗑️ Excluir</button>
-      <button class="btn btn-ghost btn-sm" onclick="openPDFMusica('${m.id}','${m.titulo.replace(/'/g,"\\'")}')">📄 PDF</button>
-      <button class="btn btn-ghost" onclick="closeModal()">Fechar</button>
-      <button class="btn btn-primary" onclick="doSave()">💾 Salvar</button>
+      ${novo ? `
+        <button class="btn btn-danger btn-sm" onclick="descartarImportacao()">Descartar</button>
+        <span style="flex:1"></span>
+        <button class="btn btn-primary" onclick="doSave()">💾 ${_filaImport.length ? 'Salvar e próxima →' : 'Salvar na biblioteca'}</button>
+      ` : `
+        <button class="btn btn-danger btn-sm" onclick="delMusica('${m.id}','${m.titulo.replace(/'/g,"\\'")}',true)">🗑️ Excluir</button>
+        <button class="btn btn-ghost btn-sm" onclick="openPDFMusica('${m.id}','${m.titulo.replace(/'/g,"\\'")}')">📄 PDF</button>
+        <button class="btn btn-ghost" onclick="requestCloseModal()">Fechar</button>
+        <button class="btn btn-primary" onclick="doSave()">💾 Salvar</button>
+      `}
     </div>
-  `, 'modal-lg');
+  `, 'modal-lg modal-editor');
+
+  document.querySelector('#modal-root .modal').addEventListener('input', () => { _editDirty = true; });
+  _modalGuard = () => {
+    if (!_editDirty) return true;
+    const ok = confirm(novo ? 'Descartar esta importação? A música não será salva.' : 'Descartar as alterações não salvas?');
+    if (ok && novo) setTimeout(abrirProximaRevisao, 320);
+    return ok;
+  };
+}
+
+function descartarImportacao() {
+  requestCloseModal();
 }
 
 function switchTab(tab) {
@@ -1007,16 +1239,77 @@ function switchTab(tab) {
 
 function collectEdits() {
   if(!editM) return;
-  if(document.getElementById('e-titulo'))   editM.titulo   = document.getElementById('e-titulo').value;
-  if(document.getElementById('e-artista'))  editM.artista  = document.getElementById('e-artista').value;
-  if(document.getElementById('e-tom-orig')) editM.tom_original = document.getElementById('e-tom-orig').value;
-  if(document.getElementById('e-bpm'))      editM.bpm = parseInt(document.getElementById('e-bpm').value)||null;
-  if(document.getElementById('e-duracao'))  editM.duracao_min = parseFloat(document.getElementById('e-duracao').value)||null;
-  if(document.getElementById('e-notas'))    editM.notas = document.getElementById('e-notas').value;
+  const val = id => document.getElementById(id)?.value;
+  if(val('e-titulo')   !== undefined) editM.titulo   = val('e-titulo').trim();
+  if(val('e-artista')  !== undefined) editM.artista  = val('e-artista').trim();
+  if(val('e-tom-orig') !== undefined) editM.tom_original = val('e-tom-orig').trim();
+  if(val('e-tom')      !== undefined) {
+    const t = val('e-tom').trim() || 'C';
+    if (editM.tom === editM.tom_original) editM.tom_original = t;
+    editM.tom = t;
+  }
+  if(val('e-bpm')      !== undefined) editM.bpm = parseInt(val('e-bpm'))||null;
+  if(val('e-duracao')  !== undefined) editM.duracao_min = parseFloat(val('e-duracao'))||null;
+  if(val('e-notas')    !== undefined) editM.notas = val('e-notas');
   if(document.getElementById('e-favorito')) editM.favorito = document.getElementById('e-favorito').checked;
-  if(document.getElementById('e-cifra'))    editM.cifra_tradicional = parseCifra(document.getElementById('e-cifra').value);
-  if(document.getElementById('e-tabela'))   editM.tabela   = parseTabela(document.getElementById('e-tabela').value);
+  if(val('e-cifra')    !== undefined) editM.cifra_tradicional = parseCifra(val('e-cifra'));
+  if(val('e-tabela')   !== undefined) editM.tabela   = parseTabela(val('e-tabela'));
 }
+
+function inserirSecao(nome) {
+  const ta = document.getElementById('e-cifra');
+  if (!ta) return;
+  const ini = ta.value.lastIndexOf('\n', ta.selectionStart - 1) + 1;
+  const antes = ta.value.slice(0, ini);
+  const prefixo = antes.trim() && !antes.endsWith('\n\n') ? '\n' : '';
+  ta.setRangeText(`${prefixo}[${nome}]\n`, ini, ini, 'end');
+  ta.focus();
+  _editDirty = true;
+  atualizarPreviewCifra();
+}
+
+function teclaEditorCifra(e) {
+  if (e.key !== 'Tab') return;
+  e.preventDefault();
+  const ta = e.target;
+  ta.setRangeText('  ', ta.selectionStart, ta.selectionEnd, 'end');
+  _editDirty = true;
+  agendarPreviewCifra();
+}
+
+function agendarPreviewCifra() {
+  clearTimeout(_previewTimer);
+  _previewTimer = setTimeout(atualizarPreviewCifra, 150);
+}
+
+function atualizarPreviewCifra() {
+  const ta = document.getElementById('e-cifra');
+  const pv = document.getElementById('cifra-preview');
+  if (ta && pv) pv.innerHTML = renderCifraHtml(parseCifra(ta.value)) || '<div class="cifra-preview-vazio">A prévia aparece aqui</div>';
+}
+
+function togglePreviewCifra() {
+  _editPreview = !_editPreview;
+  document.querySelector('.cifra-editor')?.classList.toggle('show-preview', _editPreview);
+  const btn = document.querySelector('.tb-preview-toggle');
+  if (btn) { btn.classList.toggle('on', _editPreview); btn.textContent = _editPreview ? '✎ Editar' : '👁 Visualizar'; }
+  atualizarPreviewCifra();
+}
+
+function gerarGradeEditor() {
+  collectEdits();
+  if ((editM.tabela||[]).length && !confirm('Substituir a grade atual pela gerada a partir da cifra?')) return;
+  editM.tabela = gerarGradeDaCifra(editM.cifra_tradicional);
+  _editDirty = true;
+  renderEditModal();
+}
+
+window.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && document.querySelector('#modal-root [data-edit]')) {
+    e.preventDefault();
+    doSave();
+  }
+});
 
 function addTag() {
   const input = document.getElementById('tag-input');
@@ -1025,14 +1318,16 @@ function addTag() {
   if(!editM.tags) editM.tags = [];
   if(!editM.tags.includes(val)) editM.tags.push(val);
   input.value = '';
+  _editDirty = true;
   renderTagsEditor();
 }
 function addTagDirect(t) {
   if(!editM.tags) editM.tags = [];
-  if(!editM.tags.includes(t)) { editM.tags.push(t); renderTagsEditor(); }
+  if(!editM.tags.includes(t)) { editM.tags.push(t); _editDirty = true; renderTagsEditor(); }
 }
 function removeTag(t) {
   editM.tags = (editM.tags||[]).filter(x=>x!==t);
+  _editDirty = true;
   renderTagsEditor();
 }
 function renderTagsEditor() {
@@ -1045,35 +1340,68 @@ function renderTagsEditor() {
 
 async function doSave() {
   collectEdits();
+  if (!editM.titulo) { toast('Informe o título da música', 'err'); return; }
+  const novo = !editM.id;
   const tabelaSecoesCount = (editM.tabela||[]).length;
+  const { _fonte, ...dados } = editM;
   try {
-    const r = await api.put(`/api/musicas/${editM.id}`, editM);
+    const r = novo
+      ? await api.post('/api/musicas', { ...dados, artista: dados.artista || 'Desconhecido' })
+      : await api.put(`/api/musicas/${editM.id}`, dados);
     if (r.erro) throw new Error(r.erro);
+    _editDirty = false;
     closeModal();
-    let msg = r.offline ? '💾 Salvo localmente — será sincronizado quando conectar' : '✅ Salvo!';
+    let msg = r.offline ? '💾 Salvo localmente — será sincronizado quando conectar' : `✅ ${novo ? `“${dados.titulo}” adicionada à biblioteca` : 'Salvo!'}`;
     if (editTab === 'tabela' && tabelaSecoesCount > 0) msg += ` Grade: ${tabelaSecoesCount} seção(ões)`;
     toast(msg);
+    if (novo) {
+      _biblioteca.push({ titulo: dados.titulo, artista: dados.artista });
+      if (_filaImport.length) { setTimeout(abrirProximaRevisao, 320); return; }
+      _filaTotal = 0;
+      mFilter = '';
+    }
     renderMusicas();
   } catch(e) {
     toast('❌ Erro ao salvar: ' + e.message, 'err');
   }
 }
 
-async function doTransp(st, reset=false) {
-  collectEdits();
-  const r = await api.post(`/api/musicas/${editM.id}/transpor`, {semitones: st, reset});
-  if(r.ok) {
-    editM = await api.get(`/api/musicas/${editM.id}`);
-    renderEditModal();
-    toast(`Tom alterado para: ${r.novo_tom}`);
+function transporLinhaAlinhada(linha, st) {
+  if (!st || !linha) return linha;
+  let out = '', excesso = 0;
+  for (const parte of linha.match(/\s+|\S+/g) || []) {
+    if (/^\s/.test(parte)) {
+      const n = Math.max(1, parte.length - excesso);
+      excesso -= parte.length - n;
+      out += ' '.repeat(n);
+    } else {
+      const novo = CHORD_TOKEN_RE.test(parte) ? jsTranspoeAcorde(parte, st) : parte;
+      excesso += novo.length - parte.length;
+      out += novo;
+    }
   }
+  return out;
+}
+
+function doTransp(st, reset=false) {
+  collectEdits();
+  if (reset) st = -semitonesDiff(editM.tom_original, editM.tom);
+  if (!st) return;
+  editM.cifra_tradicional = (editM.cifra_tradicional||[]).map(l => ({...l, acordes: transporLinhaAlinhada(l.acordes||'', st)}));
+  editM.tabela = (editM.tabela||[]).map(s => ({
+    ...s, grid: (s.grid||[]).map(row => row.map(c => c === '%' ? c : jsTranspoeAcorde(c, st)))
+  }));
+  editM.tom = jsTranspoeAcorde(editM.tom, st);
+  _editDirty = true;
+  renderEditModal();
+  toast(`Tom: ${editM.tom} — clique em Salvar para gravar`);
 }
 
 function semitonesDiff(orig, atual) {
   const NOTAS=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
   const ENH={'Db':'C#','Eb':'D#','Fb':'E','Gb':'F#','Ab':'G#','Bb':'A#','Cb':'B'};
   const norm = n => ENH[n]||n;
-  const get  = t => { const m=t.match(/^([A-G][b#]?)/); return m ? NOTAS.indexOf(norm(m[1])) : -1; };
+  const get  = t => { const m=(t||'').match(/^([A-G][b#]?)/); return m ? NOTAS.indexOf(norm(m[1])) : -1; };
   const o=get(orig), a=get(atual);
   if(o<0||a<0) return 0;
   let d=a-o; if(d>6)d-=12; if(d<-6)d+=12;
@@ -1081,28 +1409,71 @@ function semitonesDiff(orig, atual) {
 }
 
 function parseCifra(text) {
-  const lines = text.split('\n');
   const res = [];
-  let secaoAtual = '';
-  for(const line of lines) {
-    const t = line.trim();
-    if(!t) continue;
-    const sm = t.match(/^\[(.+)\]$/);
-    if(sm) { secaoAtual = sm[1]; continue; }
-    const isChord = /^[A-G]/.test(t) && !/[a-z]{5,}/.test(t);
-    if(isChord) {
-      res.push({secao: secaoAtual, acordes: t, letra: ''});
-      secaoAtual = '';
+  let secaoAtual = '', pendente = null;
+  const push = (acordes, letra) => {
+    res.push({secao: secaoAtual, acordes, letra});
+    secaoAtual = '';
+  };
+  for(const line of text.split('\n')) {
+    const t = line.replace(/\s+$/, '');
+    if(!t.trim()) continue;
+    const sm = t.trim().match(/^\[(.+)\]$/);
+    if(sm) {
+      if(pendente !== null) { push(pendente, ''); pendente = null; }
+      secaoAtual = sm[1].trim();
+      continue;
+    }
+    if(isChordLine(t)) {
+      if(pendente !== null) push(pendente, '');
+      pendente = t;
+    } else if(pendente !== null) {
+      push(pendente, t);
+      pendente = null;
     } else {
-      if(res.length && res[res.length-1].letra==='' && !res[res.length-1].secao && res[res.length-1].acordes) {
-        res[res.length-1].letra = t;
-      } else {
-        res.push({secao: secaoAtual, acordes: '', letra: t});
-        secaoAtual = '';
-      }
+      push('', t);
     }
   }
+  if(pendente !== null) push(pendente, '');
   return res;
+}
+
+// ── Renderização da cifra (palco + prévia do editor) ───────────────────
+function spanAcorde(tk) {
+  return CHORD_TOKEN_RE.test(tk)
+    ? `<span class="ap-ch" data-original="${escAttr(tk)}">${escHtml(tk)}</span>`
+    : escHtml(tk);
+}
+
+function spansAcordes(linha) {
+  return (linha.match(/\s+|\S+/g) || []).map(p => /^\s/.test(p) ? p : spanAcorde(p)).join('');
+}
+
+function renderParCifra(acordes, letra) {
+  const pos = [...acordes.matchAll(/\S+/g)].map(m => ({ col: m.index, tk: m[0] }));
+  const seg = (tk, txt) =>
+    `<span class="ap-seg"><span class="ap-seg-ch">${tk ? spanAcorde(tk) : ''}</span><span class="ap-seg-ly">${escHtml(txt)}</span></span>`;
+  let html = pos[0].col > 0 && letra.slice(0, pos[0].col) ? seg('', letra.slice(0, pos[0].col)) : '';
+  pos.forEach((p, i) => {
+    html += seg(p.tk, letra.slice(p.col, i + 1 < pos.length ? pos[i + 1].col : undefined));
+  });
+  return `<div class="ap-par">${html}</div>`;
+}
+
+function renderCifraHtml(cifra) {
+  let secaoAtual = '';
+  return (cifra||[]).map(l => {
+    let h = '';
+    if (l.secao && l.secao !== secaoAtual) {
+      secaoAtual = l.secao;
+      h += `<div class="ap-secao-l">${escHtml(l.secao)}</div>`;
+    }
+    if (l.acordes && !l.acordes.trim()) l = {...l, acordes: ''};
+    if (l.acordes && l.letra) h += renderParCifra(l.acordes, l.letra);
+    else if (l.acordes)       h += `<div class="ap-acorde-l">${spansAcordes(l.acordes)}</div>`;
+    else if (l.letra)         h += `<div class="ap-letra-l">${escHtml(l.letra)}</div>`;
+    return h;
+  }).join('');
 }
 
 function parseTabela(text) {
@@ -1318,10 +1689,9 @@ function transposeStage(st) {
     tomBadge.textContent = jsTranspoeAcorde(origTom, _apTransposeDiff);
   }
   
-  // Atualiza todas as linhas de acordes
-  document.querySelectorAll('.ap-acorde-l').forEach(el => {
-    const origLine = el.dataset.original;
-    el.textContent = jsTranspoeLinha(origLine, _apTransposeDiff);
+  // Atualiza todos os acordes da cifra
+  document.querySelectorAll('#ap-root .ap-ch').forEach(el => {
+    el.textContent = jsTranspoeAcorde(el.dataset.original, _apTransposeDiff);
   });
 
   // Atualiza todas as células da grade de acordes
@@ -1340,25 +1710,10 @@ async function openApresentacao(id) {
   const m = await api.get(`/api/musicas/${id}`);
   const cifra = m.cifra_tradicional || [];
 
-  const linhas = [];
-  let secaoAtual = '';
-  for(const l of cifra) {
-    if(l.secao && l.secao !== secaoAtual) {
-      secaoAtual = l.secao;
-      linhas.push({tipo:'secao', texto: l.secao});
-    }
-    if(l.acordes) linhas.push({tipo:'acorde', texto: l.acordes});
-    if(l.letra)   linhas.push({tipo:'letra',  texto: l.letra});
-  }
-
   const bpm = m.bpm || 80;
   const scrollSpeed = Math.max(0.3, Math.min(3, bpm / 80));
 
-  const html = linhas.map(l => {
-    if(l.tipo==='secao')  return `<div class="ap-secao-l">${l.texto}</div>`;
-    if(l.tipo==='acorde') return `<div class="ap-acorde-l" data-original="${l.texto.replace(/"/g, '&quot;')}">${l.texto}</div>`;
-    return `<div class="ap-letra-l">${l.texto}</div>`;
-  }).join('');
+  const html = renderCifraHtml(cifra);
 
   const gridSections = m.tabela || [];
   const gridHtml = gridSections.length ? gridSections.map(s => {

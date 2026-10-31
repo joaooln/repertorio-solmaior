@@ -75,6 +75,8 @@ solmaior/
 |--------|-----------|
 | **Importar via link** | Cole uma URL do Cifra Club ou Cifras.com.br — a IA extrai cifra, tabela e tom automaticamente |
 | **Importar em lote** | Cole múltiplos links de uma vez; progresso exibido por linha |
+| **Importar PDF (Moises)** | Envie um ou vários PDFs de acordes do Moises.ai — cada música abre no editor para revisão antes de salvar (não usa IA) |
+| **Editor de cifra** | Prévia ao vivo com acordes alinhados à letra, botões de seção, transposição que preserva o alinhamento, grade gerada a partir da cifra, `Ctrl/⌘+S` para salvar |
 | **Adicionar manual** | Crie músicas do zero preenchendo título, artista e tom |
 | **Editar** | Título, artista, tom, cifra tradicional, grade de acordes |
 | **Transpor** | +1/−1 semitom em toda a cifra e tabela ao mesmo tempo |

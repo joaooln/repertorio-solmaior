@@ -1,7 +1,7 @@
 """
 Repertório Sol Maior — Backend Flask + SQLite
 """
-import os, json, re, subprocess, sys, psycopg2, io, unicodedata
+import os, json, re, subprocess, sys, psycopg2, io, unicodedata, base64
 from contextlib import contextmanager
 from psycopg2.extras import RealDictCursor
 from datetime import datetime
@@ -101,6 +101,10 @@ def sanitizar_pdf(texto):
 NOTAS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 ENHAR = {'Db':'C#','Eb':'D#','Fb':'E','Gb':'F#','Ab':'G#','Bb':'A#','Cb':'B'}
 
+def texto_pdf(texto):
+    t = str(texto).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    return t.replace(' ', '&nbsp;')
+
 def normaliza(n):
     if not n: return ''
     clean = str(n).replace('♭', 'b').replace('♯', '#')
@@ -108,6 +112,8 @@ def normaliza(n):
 
 def transpoe_acorde(acorde, st):
     if st == 0: return acorde
+    if '/' in acorde:
+        return '/'.join(transpoe_acorde(p, st) for p in acorde.split('/'))
     m = re.match(r'^([A-G][b#]?)(.*)$', acorde)
     if not m: return acorde
     raiz, suf = m.group(1), m.group(2)
@@ -320,7 +326,7 @@ def criar_musica():
                 """INSERT INTO musicas (id, titulo, artista, tom, tom_original, cifra_json, tabela_json,
                        url_origem, favorito, tags, bpm, duracao_min, notas, criado_em, atualizado_em)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (mid, d['titulo'], d['artista'], d.get('tom','C'), d.get('tom','C'),
+                (mid, d['titulo'], d['artista'], d.get('tom','C'), d.get('tom_original') or d.get('tom','C'),
                  json.dumps(d.get('cifra_tradicional', []), ensure_ascii=False),
                  json.dumps(d.get('tabela', []), ensure_ascii=False),
                  d.get('url_origem'), d.get('favorito', False),
@@ -758,6 +764,115 @@ REGRAS IMPORTANTES:
         print(f"Erro na importação: {e}")
         return jsonify({'erro': str(e)}), 500
 
+# ─── Importar PDF (Moises.ai) ─────────────────────────────────────────────────
+ACORDE_RE = re.compile(
+    r'^[A-G][#b]?(?:maj|min|dim|aug|sus|add|m|M|º|°|\+)?'
+    r'(?:[0-9]{1,2}|M|[#b+-][0-9]{1,2}|sus[0-9]?|add[0-9]{1,2}|dim|\([^)]*\))*'
+    r'(?:/[A-G][#b]?)?$'
+)
+SECOES_PDF = {
+    'INTRO': 'Intro', 'INTRODUÇÃO': 'Intro', 'VERSO': 'Verso', 'VERSE': 'Verso',
+    'PRÉ-REFRÃO': 'Pré-Refrão', 'PRE-REFRÃO': 'Pré-Refrão', 'PRE-CHORUS': 'Pré-Refrão',
+    'REFRÃO': 'Refrão', 'CHORUS': 'Refrão', 'PONTE': 'Ponte', 'BRIDGE': 'Ponte',
+    'SOLO': 'Solo', 'INSTRUMENTAL': 'Instrumental', 'OUTRO': 'Final', 'FINAL': 'Final',
+}
+LIXO_TITULO_RE = re.compile(
+    r'\s*[\(\[][^)\]]*(oficial|official|clipe|lyric|v[ií]deo|[áa]udio|visualizer|ao vivo|live|\bhd\b|4k)[^)\]]*[\)\]]',
+    re.I
+)
+
+def eh_linha_acordes(t):
+    tokens = t.split()
+    return bool(tokens) and all(
+        ACORDE_RE.match(tk) or tk in ('|', '%', '-') or re.match(r'^\(?x\d+\)?$', tk, re.I)
+        for tk in tokens
+    )
+
+def eh_secao(t):
+    return len(t) <= 25 and t == t.upper() and bool(re.match(r'^[A-ZÀ-Ý][A-ZÀ-Ý \-]*\d*$', t))
+
+def nome_secao(t):
+    return SECOES_PDF.get(t, t.title())
+
+def indent(l):
+    return len(l) - len(l.lstrip(' '))
+
+def parse_moises_pdf(dados):
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(dados))
+    linhas = []
+    for p in reader.pages:
+        linhas.extend((p.extract_text(extraction_mode='layout') or '').split('\n'))
+    linhas = [l.rstrip().replace('\t', '    ') for l in linhas if 'moises.ai' not in l.lower()]
+
+    titulo_pdf, tom, corpo = '', 'C', []
+    for l in linhas:
+        t = l.strip()
+        if not t and not corpo: continue
+        mk = re.match(r'^(?:key|tom|tonalidade)\s*:\s*([A-G][#b]?)\s*(\w+)?', t, re.I)
+        if mk and tom == 'C' and not corpo:
+            tom = mk.group(1) + ('m' if (mk.group(2) or '').lower() in ('minor', 'menor') else '')
+        elif not titulo_pdf:
+            titulo_pdf = t
+        else:
+            corpo.append(l)
+
+    nome = LIXO_TITULO_RE.sub('', titulo_pdf).strip(' -|')
+    partes = [p.strip() for p in re.split(r'\s+[-–—|]\s+', nome, maxsplit=1) if p.strip()]
+    artista, titulo = (partes[0], partes[1]) if len(partes) == 2 else ('', nome)
+
+    cifra, secao, pendente, teve_secao = [], '', None, False
+
+    def push(acordes, letra):
+        nonlocal secao
+        cifra.append({'secao': secao or ('' if teve_secao or cifra or letra else 'Intro'),
+                      'acordes': acordes, 'letra': letra})
+        secao = ''
+
+    def so_acordes(l):
+        return '  '.join(l.split())
+
+    for l in corpo:
+        t = l.strip()
+        if not t: continue
+        if eh_linha_acordes(t):
+            if pendente is not None: push(so_acordes(pendente), '')
+            pendente = l
+        elif eh_secao(t):
+            if pendente is not None: push(so_acordes(pendente), '')
+            pendente, secao, teve_secao = None, nome_secao(t), True
+        elif pendente is not None:
+            ind = min(indent(pendente), indent(l))
+            push(pendente[ind:].rstrip(), l[ind:].rstrip())
+            pendente = None
+        else:
+            push('', t)
+    if pendente is not None: push(so_acordes(pendente), '')
+
+    return {'titulo': titulo or 'Sem título', 'artista': artista, 'tom': tom,
+            'titulo_pdf': titulo_pdf, 'cifra_tradicional': cifra}
+
+@app.route('/api/musicas/importar-pdf', methods=['POST'])
+@admin_required
+def importar_pdf():
+    conteudo = (request.json or {}).get('conteudo', '')
+    if not conteudo:
+        return jsonify({'erro': 'Nenhum arquivo enviado'}), 400
+    try:
+        dados = base64.b64decode(conteudo.split(',')[-1])
+    except Exception:
+        return jsonify({'erro': 'Arquivo inválido'}), 400
+    if not dados.startswith(b'%PDF'):
+        return jsonify({'erro': 'O arquivo não é um PDF'}), 400
+    try:
+        musica = parse_moises_pdf(dados)
+    except Exception as e:
+        print(f"Erro lendo PDF: {e}")
+        return jsonify({'erro': f'Não foi possível ler o PDF: {e}'}), 400
+    if not musica['cifra_tradicional']:
+        return jsonify({'erro': 'Nenhuma cifra encontrada no PDF. Ele foi gerado pelo Moises?'}), 400
+    return jsonify(musica)
+
 # ─── Rotas: Repertórios ────────────────────────────────────────────────────────
 @app.route('/api/repertorios', methods=['GET'])
 def listar_repertorios():
@@ -878,6 +993,8 @@ def gerar_pdf(rid):
     secao_st   = ParagraphStyle('S',  parent=styles['Normal'], fontSize=9,  fontName='Helvetica-Bold', textColor=GOLD, spaceBefore=10, spaceAfter=4, leading=12)
     acorde_st  = ParagraphStyle('AC', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=DARK, spaceBefore=4, leading=12)
     letra_st   = ParagraphStyle('L',  parent=styles['Normal'], fontSize=10, fontName='Helvetica', textColor=DARK, spaceAfter=4, leading=14)
+    acorde_mono_st = ParagraphStyle('ACM', parent=acorde_st, fontName='Courier-Bold')
+    letra_mono_st  = ParagraphStyle('LM',  parent=letra_st,  fontName='Courier')
     tab_sec_st = ParagraphStyle('TS', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=DARK, alignment=TA_CENTER, spaceBefore=12, spaceAfter=8)
     indice_h   = ParagraphStyle('IH', parent=styles['Normal'], fontSize=16, fontName='Helvetica-Bold', textColor=DARK, spaceAfter=16)
     link_st    = ParagraphStyle('LK', parent=styles['Normal'], fontSize=11, fontName='Helvetica', leading=20, textColor=DARK)
@@ -953,10 +1070,11 @@ def gerar_pdf(rid):
             if secao and secao != secao_atual:
                 secao_atual = secao
                 story.append(Paragraph(secao, secao_st))
+            mono = bool(acordes and letra)
             if acordes:
-                story.append(Paragraph(sanitizar_pdf(acordes), acorde_st))
+                story.append(Paragraph(texto_pdf(sanitizar_pdf(acordes)), acorde_mono_st if mono else acorde_st))
             if letra:
-                story.append(Paragraph(letra, letra_st))
+                story.append(Paragraph(texto_pdf(letra) if mono else letra, letra_mono_st if mono else letra_st))
             if not acordes and not letra and not secao:
                 story.append(Spacer(1, 0.2*cm))
         story.append(PageBreak())
@@ -1072,6 +1190,8 @@ def pdf_musica(mid):
     secao_st   = ParagraphStyle('S',  parent=styles['Normal'], fontSize=9,  fontName='Helvetica-Bold', textColor=GOLD, spaceBefore=10, spaceAfter=4, leading=12)
     acorde_st  = ParagraphStyle('AC', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=DARK, spaceBefore=4, leading=12)
     letra_st   = ParagraphStyle('L',  parent=styles['Normal'], fontSize=10, fontName='Helvetica', textColor=DARK, spaceAfter=4, leading=14)
+    acorde_mono_st = ParagraphStyle('ACM', parent=acorde_st, fontName='Courier-Bold')
+    letra_mono_st  = ParagraphStyle('LM',  parent=letra_st,  fontName='Courier')
     tab_sec_st = ParagraphStyle('TS', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=DARK, alignment=TA_CENTER, spaceBefore=12, spaceAfter=8)
 
     doc = SimpleDocTemplate(output_path, pagesize=A4,
@@ -1087,8 +1207,9 @@ def pdf_musica(mid):
             secao = linha.get('secao', ''); acordes = linha.get('acordes', ''); letra = linha.get('letra', '')
             if secao and secao != secao_atual:
                 secao_atual = secao; story.append(Paragraph(secao, secao_st))
-            if acordes: story.append(Paragraph(sanitizar_pdf(acordes), acorde_st))
-            if letra:   story.append(Paragraph(letra, letra_st))
+            mono = bool(acordes and letra)
+            if acordes: story.append(Paragraph(texto_pdf(sanitizar_pdf(acordes)), acorde_mono_st if mono else acorde_st))
+            if letra:   story.append(Paragraph(texto_pdf(letra) if mono else letra, letra_mono_st if mono else letra_st))
         if modo == 'completo' and m['tabela']:
             story.append(Spacer(1, 0.5*cm))
             story.append(HRFlowable(width="100%", thickness=0.5, color=GREY_LINE, spaceAfter=12))
