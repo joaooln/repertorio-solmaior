@@ -325,7 +325,8 @@ def criar_musica():
             cur.execute(
                 """INSERT INTO musicas (id, titulo, artista, tom, tom_original, cifra_json, tabela_json,
                        url_origem, favorito, tags, bpm, duracao_min, notas, criado_em, atualizado_em)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (id) DO NOTHING""",
                 (mid, d['titulo'], d['artista'], d.get('tom','C'), d.get('tom_original') or d.get('tom','C'),
                  json.dumps(d.get('cifra_tradicional', []), ensure_ascii=False),
                  json.dumps(d.get('tabela', []), ensure_ascii=False),

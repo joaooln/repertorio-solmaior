@@ -959,7 +959,8 @@ function abrirProximaRevisao() {
   const artistas = new Set(_biblioteca.map(m => normTxt(m.artista)));
   if (artistas.has(normTxt(titulo)) && !artistas.has(normTxt(artista))) [titulo, artista] = [artista, titulo];
   editM = {
-    id: null, titulo, artista, tom: d.tom, tom_original: d.tom,
+    id: null, _novoId: crypto.randomUUID().slice(0, 8),
+    titulo, artista, tom: d.tom, tom_original: d.tom,
     cifra_tradicional: d.cifra_tradicional,
     tabela: gerarGradeDaCifra(d.cifra_tradicional),
     tags: [], notas: '', favorito: false, bpm: null, duracao_min: null,
@@ -1338,17 +1339,25 @@ function renderTagsEditor() {
   ed.innerHTML = chips + input;
 }
 
+let _salvando = false;
+
 async function doSave() {
+  if (_salvando) return;
   collectEdits();
   if (!editM.titulo) { toast('Informe o título da música', 'err'); return; }
   const novo = !editM.id;
   const tabelaSecoesCount = (editM.tabela||[]).length;
-  const { _fonte, ...dados } = editM;
+  const { _fonte, _novoId, ...dados } = editM;
+  const btn = document.querySelector('#modal-root .modal-footer .btn-primary');
+  const btnHtml = btn?.innerHTML;
+  _salvando = true;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin spin-sm"></span> Salvando…'; }
   try {
     const r = novo
-      ? await api.post('/api/musicas', { ...dados, artista: dados.artista || 'Desconhecido' })
+      ? await api.post('/api/musicas', { ...dados, id: _novoId, artista: dados.artista || 'Desconhecido' })
       : await api.put(`/api/musicas/${editM.id}`, dados);
     if (r.erro) throw new Error(r.erro);
+    if (novo) editM.id = r.id;
     _editDirty = false;
     closeModal();
     let msg = r.offline ? '💾 Salvo localmente — será sincronizado quando conectar' : `✅ ${novo ? `“${dados.titulo}” adicionada à biblioteca` : 'Salvo!'}`;
@@ -1363,6 +1372,9 @@ async function doSave() {
     renderMusicas();
   } catch(e) {
     toast('❌ Erro ao salvar: ' + e.message, 'err');
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
+  } finally {
+    _salvando = false;
   }
 }
 
