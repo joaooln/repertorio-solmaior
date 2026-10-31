@@ -10,7 +10,7 @@ function escAttr(s) {
   return escHtml(s).replace(/"/g, '&quot;');
 }
 
-const CHORD_TOKEN_RE = /^[A-G][#b]?(?:maj|min|dim|aug|sus|add|m|M|º|°|\+)?(?:[0-9]{1,2}|M|[#b+-][0-9]{1,2}|sus[0-9]?|add[0-9]{1,2}|dim|\([^)]*\))*(?:\/[A-G][#b]?)?$/;
+const CHORD_TOKEN_RE = /^[A-G][#b]?(?:maj|min|dim|aug|sus|add|m|M|º|°|\+|(?<=[#b])o)?(?:[0-9]{1,2}|M|[#b+-][0-9]{1,2}|sus[0-9]?|add[0-9]{1,2}|dim|\([^)]*\))*(?:\/[A-G][#b]?)?\.?$/;
 
 function isChordLine(linha) {
   const tokens = linha.trim().split(/\s+/);
@@ -1728,7 +1728,7 @@ async function openApresentacao(id) {
   const bpm = m.bpm || 80;
   const scrollSpeed = Math.max(0.3, Math.min(3, bpm / 80));
 
-  const html = renderCifraHtml(cifra);
+  const html = renderCifraHtml(parseCifra(cifraParaTexto(cifra)));
 
   const gridSections = m.tabela || [];
   const gridHtml = gridSections.length ? gridSections.map(s => {

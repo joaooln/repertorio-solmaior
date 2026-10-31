@@ -96,14 +96,112 @@ def remove_acentos(texto):
 
 def sanitizar_pdf(texto):
     if not texto: return ''
-    return str(texto).replace('♭', 'b').replace('♯', '#')
+    return unicodedata.normalize('NFC', str(texto)).replace('♭', 'b').replace('♯', '#')
+
+def pdf_txt(texto):
+    return sanitizar_pdf(texto).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+def repara_cifra(cifra):
+    # Linhas de acordes salvas como letra (editor antigo) voltam a ficar acima da letra seguinte
+    res = []
+    for l in cifra or []:
+        ac, le = (l.get('acordes') or '').rstrip(), (l.get('letra') or '').rstrip()
+        if not ac.strip(): ac = ''
+        if not ac and le and eh_linha_acordes(le.strip()):
+            ac, le = le, ''
+        ant = res[-1] if res else None
+        if ant and not ac and le and ant['acordes'] and not ant['letra'] and not l.get('secao'):
+            ant['letra'] = le
+            continue
+        res.append({'secao': l.get('secao') or '', 'acordes': ac, 'letra': le})
+    return res
+
+def cifra_flowables(cifra, secao_st, letra_st, cor_acorde):
+    from reportlab.platypus import Paragraph, Flowable
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    F_AC, F_LE, T_AC, T_LE, PAD = 'Helvetica-Bold', 'Helvetica', 9.5, 10.5, 3
+
+    class LinhaCifra(Flowable):
+        """Acordes desenhados exatamente sobre a sílaba da letra, como um bloco único."""
+        def __init__(self, acordes, letra):
+            super().__init__()
+            self.acordes = [(m.start(), sanitizar_pdf(m.group())) for m in re.finditer(r'\S+', acordes)]
+            self.letra = sanitizar_pdf(letra)
+
+        def _posicoes(self, esc):
+            ta, tl = T_AC * esc, T_LE * esc
+            esp_le, esp_ac = stringWidth(' ', F_LE, tl), stringWidth(' ', F_AC, ta)
+            pos, fim = [], 0
+            for col, ac in self.acordes:
+                if self.letra:
+                    x = stringWidth(self.letra[:col], F_LE, tl) + max(0, col - len(self.letra)) * esp_le
+                else:
+                    x = fim + (3 * esp_ac if pos else 0)
+                x = max(x, fim)
+                pos.append((x, ac))
+                fim = x + stringWidth(ac, F_AC, ta) + esp_ac
+            return pos, max(fim, stringWidth(self.letra, F_LE, tl))
+
+        def wrap(self, aw, ah):
+            self.esc = 1
+            self.pos, largura = self._posicoes(1)
+            if largura > aw:
+                self.esc = max(0.6, aw / largura)
+                self.pos, _ = self._posicoes(self.esc)
+            self.h_le = T_LE * self.esc * 1.3 if self.letra else 0
+            self.h_ac = T_AC * self.esc * 1.3 if self.acordes else 0
+            self.width, self.height = aw, self.h_le + self.h_ac + PAD
+            return self.width, self.height
+
+        def draw(self):
+            c = self.canv
+            if self.letra:
+                c.setFillColor(letra_st.textColor)
+                c.setFont(F_LE, T_LE * self.esc)
+                c.drawString(0, PAD + T_LE * self.esc * 0.3, self.letra)
+            if self.acordes:
+                c.setFillColor(cor_acorde)
+                c.setFont(F_AC, T_AC * self.esc)
+                for x, ac in self.pos:
+                    c.drawString(x, PAD + self.h_le + T_AC * self.esc * 0.3, ac)
+
+    out, secao_atual = [], ''
+    for l in repara_cifra(cifra):
+        if l['secao'] and l['secao'] != secao_atual:
+            secao_atual = l['secao']
+            out.append(Paragraph(pdf_txt(l['secao']), secao_st))
+        if l['acordes']:
+            out.append(LinhaCifra(l['acordes'], l['letra']))
+        elif l['letra']:
+            out.append(Paragraph(pdf_txt(l['letra']), letra_st))
+    return out
+
+def grade_flowables(tabela, tab_sec_st, cores):
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    out = []
+    for secao in tabela or []:
+        out.append(Paragraph(pdf_txt(secao.get('nome_secao', '')).upper(), tab_sec_st))
+        grid = [[sanitizar_pdf(c) for c in row] + [''] * (4 - len(row)) for row in secao.get('grid') or [] if row]
+        if grid:
+            t = Table(grid, colWidths=[(A4[0] - 4*cm) / 4] * 4, rowHeights=32)
+            t.setStyle(TableStyle([
+                ('GRID',        (0,0), (-1,-1), 0.5, cores['linha']),
+                ('ALIGN',       (0,0), (-1,-1), 'CENTER'),
+                ('VALIGN',      (0,0), (-1,-1), 'MIDDLE'),
+                ('FONTNAME',    (0,0), (-1,-1), 'Helvetica-Bold'),
+                ('FONTSIZE',    (0,0), (-1,-1), 11),
+                ('TEXTCOLOR',   (0,0), (-1,-1), cores['texto']),
+                ('ROWBACKGROUNDS', (0,0), (-1,-1), [cores['fundo'], cores['fundo_alt']]),
+            ]))
+            out.append(t)
+        out.append(Spacer(1, 0.3*cm))
+    return out
 
 NOTAS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 ENHAR = {'Db':'C#','Eb':'D#','Fb':'E','Gb':'F#','Ab':'G#','Bb':'A#','Cb':'B'}
-
-def texto_pdf(texto):
-    t = str(texto).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-    return t.replace(' ', '&nbsp;')
 
 def normaliza(n):
     if not n: return ''
@@ -767,9 +865,9 @@ REGRAS IMPORTANTES:
 
 # ─── Importar PDF (Moises.ai) ─────────────────────────────────────────────────
 ACORDE_RE = re.compile(
-    r'^[A-G][#b]?(?:maj|min|dim|aug|sus|add|m|M|º|°|\+)?'
+    r'^[A-G][#b]?(?:maj|min|dim|aug|sus|add|m|M|º|°|\+|(?<=[#b])o)?'
     r'(?:[0-9]{1,2}|M|[#b+-][0-9]{1,2}|sus[0-9]?|add[0-9]{1,2}|dim|\([^)]*\))*'
-    r'(?:/[A-G][#b]?)?$'
+    r'(?:/[A-G][#b]?)?\.?$'
 )
 SECOES_PDF = {
     'INTRO': 'Intro', 'INTRODUÇÃO': 'Intro', 'VERSO': 'Verso', 'VERSE': 'Verso',
@@ -804,7 +902,8 @@ def parse_moises_pdf(dados):
     linhas = []
     for p in reader.pages:
         linhas.extend((p.extract_text(extraction_mode='layout') or '').split('\n'))
-    linhas = [l.rstrip().replace('\t', '    ') for l in linhas if 'moises.ai' not in l.lower()]
+    linhas = [unicodedata.normalize('NFC', l.rstrip().replace('\t', '    '))
+              for l in linhas if 'moises.ai' not in l.lower()]
 
     titulo_pdf, tom, corpo = '', 'C', []
     for l in linhas:
@@ -991,30 +1090,14 @@ def gerar_pdf(rid):
 
     titulo_st  = ParagraphStyle('T',  parent=styles['Normal'], fontSize=20, fontName='Helvetica-Bold', textColor=DARK, spaceAfter=8, leading=26)
     artista_st = ParagraphStyle('A',  parent=styles['Normal'], fontSize=11, fontName='Helvetica', textColor=MUTED, spaceAfter=16, leading=14)
-    secao_st   = ParagraphStyle('S',  parent=styles['Normal'], fontSize=9,  fontName='Helvetica-Bold', textColor=GOLD, spaceBefore=10, spaceAfter=4, leading=12)
-    acorde_st  = ParagraphStyle('AC', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=DARK, spaceBefore=4, leading=12)
+    secao_st   = ParagraphStyle('S',  parent=styles['Normal'], fontSize=9,  fontName='Helvetica-Bold', textColor=GOLD, spaceBefore=10, spaceAfter=4, leading=12, keepWithNext=1)
+    CHORD      = colors.HexColor('#8a6414')
     letra_st   = ParagraphStyle('L',  parent=styles['Normal'], fontSize=10, fontName='Helvetica', textColor=DARK, spaceAfter=4, leading=14)
-    acorde_mono_st = ParagraphStyle('ACM', parent=acorde_st, fontName='Courier-Bold')
-    letra_mono_st  = ParagraphStyle('LM',  parent=letra_st,  fontName='Courier')
-    tab_sec_st = ParagraphStyle('TS', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=DARK, alignment=TA_CENTER, spaceBefore=12, spaceAfter=8)
+    tab_sec_st = ParagraphStyle('TS', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=DARK, alignment=TA_CENTER, spaceBefore=12, spaceAfter=8, keepWithNext=1)
     indice_h   = ParagraphStyle('IH', parent=styles['Normal'], fontSize=16, fontName='Helvetica-Bold', textColor=DARK, spaceAfter=16)
     link_st    = ParagraphStyle('LK', parent=styles['Normal'], fontSize=11, fontName='Helvetica', leading=20, textColor=DARK)
 
-    def make_tabela(linhas):
-        clean_linhas = [[sanitizar_pdf(cell) for cell in row] for row in linhas]
-        col_w = (A4[0] - 4*cm) / 4
-        t = Table(clean_linhas, colWidths=[col_w]*4, rowHeights=32)
-        t.setStyle(TableStyle([
-            ('GRID',        (0,0), (-1,-1), 0.5, GREY_LINE),
-            ('BACKGROUND',  (0,0), (-1,-1), colors.white),
-            ('ALIGN',       (0,0), (-1,-1), 'CENTER'),
-            ('VALIGN',      (0,0), (-1,-1), 'MIDDLE'),
-            ('FONTNAME',    (0,0), (-1,-1), 'Helvetica-Bold'),
-            ('FONTSIZE',    (0,0), (-1,-1), 11),
-            ('TEXTCOLOR',   (0,0), (-1,-1), DARK),
-            ('ROWBACKGROUNDS', (0,0), (-1,-1), [colors.white, GOLD_LIGHT]),
-        ]))
-        return t
+    CORES_GRADE = {'linha': GREY_LINE, 'texto': DARK, 'fundo': colors.white, 'fundo_alt': GOLD_LIGHT}
 
     def add_page_number(canvas, doc):
         page_num = canvas.getPageNumber()
@@ -1025,7 +1108,7 @@ def gerar_pdf(rid):
             canvas.setStrokeColor(GREY_LINE)
             canvas.setLineWidth(0.5)
             canvas.line(2*cm, A4[1] - 1.2*cm, A4[0] - 2*cm, A4[1] - 1.2*cm)
-            canvas.drawString(2*cm, A4[1] - 1.05*cm, rep['nome'].upper())
+            canvas.drawString(2*cm, A4[1] - 1.05*cm, sanitizar_pdf(rep['nome']).upper())
 
     doc = SimpleDocTemplate(output_path, pagesize=A4,
         rightMargin=2*cm, leftMargin=2*cm, topMargin=2.5*cm, bottomMargin=2*cm)
@@ -1036,7 +1119,7 @@ def gerar_pdf(rid):
         story.append(Spacer(1, 6*cm))
         story.append(Paragraph("REPERTÓRIO OFICIAL", ParagraphStyle('SubCapa', parent=styles['Normal'],
             fontSize=10, fontName='Helvetica', textColor=GOLD, alignment=TA_CENTER, spaceAfter=12)))
-        story.append(Paragraph(rep['nome'], ParagraphStyle('C', parent=styles['Normal'],
+        story.append(Paragraph(pdf_txt(rep['nome']), ParagraphStyle('C', parent=styles['Normal'],
             fontSize=32, fontName='Helvetica-Bold', textColor=DARK, alignment=TA_CENTER, spaceAfter=14, leading=38)))
         story.append(HRFlowable(width="30%", thickness=1.5, color=GOLD, spaceAfter=20, hAlign='CENTER'))
         info = subtitulo or f"{len(musicas)} música{'s' if len(musicas)!=1 else ''}"
@@ -1048,51 +1131,33 @@ def gerar_pdf(rid):
         story.append(Paragraph("Índice de Músicas", indice_h))
         story.append(HRFlowable(width="100%", thickness=0.5, color=GREY_LINE, spaceAfter=16))
         for i, m in enumerate(musicas, 1):
-            link = (f'<a href="#musica_{i}" color="#1a1815">{i:02d}. <b>{m["titulo"]}</b></a>'
-                    f' <font color="#757067">— {m["artista"]}</font>'
-                    f' <font color="#d4a853">&nbsp;[Tom: {m["tom"]}]</font>')
+            link = (f'<a href="#musica_{i}" color="#1a1815">{i:02d}. <b>{pdf_txt(m["titulo"])}</b></a>'
+                    f' <font color="#757067">— {pdf_txt(m["artista"])}</font>'
+                    f' <font color="#d4a853">&nbsp;[Tom: {pdf_txt(m["tom"])}]</font>')
             story.append(Paragraph(link, link_st))
             story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#fcfbf9'), spaceAfter=4, spaceBefore=4))
         story.append(PageBreak())
 
     def add_cifra(m, i):
         story.append(AnchorFlowable(f'musica_{i}'))
-        story.append(Paragraph(m['titulo'], titulo_st))
-        info_linha = f"{m['artista']} &nbsp; • &nbsp; Tom: <b><font color='#d4a853'>{m['tom']}</font></b>"
+        story.append(Paragraph(pdf_txt(m['titulo']), titulo_st))
+        info_linha = f"{pdf_txt(m['artista'])} &nbsp; • &nbsp; Tom: <b><font color='#d4a853'>{pdf_txt(m['tom'])}</font></b>"
         story.append(Paragraph(info_linha, artista_st))
         story.append(Paragraph("CIFRA COMPLETA", ParagraphStyle('ST1', parent=styles['Normal'],
             fontSize=8, fontName='Helvetica-Bold', textColor=colors.white, spaceAfter=12,
             backColor=DARK, alignment=TA_CENTER)))
-        secao_atual = ''
-        for linha in m['cifra_tradicional']:
-            secao  = linha.get('secao', '')
-            acordes = linha.get('acordes', '')
-            letra  = linha.get('letra', '')
-            if secao and secao != secao_atual:
-                secao_atual = secao
-                story.append(Paragraph(secao, secao_st))
-            mono = bool(acordes and letra)
-            if acordes:
-                story.append(Paragraph(texto_pdf(sanitizar_pdf(acordes)), acorde_mono_st if mono else acorde_st))
-            if letra:
-                story.append(Paragraph(texto_pdf(letra) if mono else letra, letra_mono_st if mono else letra_st))
-            if not acordes and not letra and not secao:
-                story.append(Spacer(1, 0.2*cm))
+        story.extend(cifra_flowables(m['cifra_tradicional'], secao_st, letra_st, CHORD))
         story.append(PageBreak())
 
     def add_tabela(m, i):
         story.append(AnchorFlowable(f'musica_{i}'))
-        story.append(Paragraph(m['titulo'], titulo_st))
-        info_linha = f"{m['artista']} &nbsp; • &nbsp; Tom: <b><font color='#d4a853'>{m['tom']}</font></b>"
+        story.append(Paragraph(pdf_txt(m['titulo']), titulo_st))
+        info_linha = f"{pdf_txt(m['artista'])} &nbsp; • &nbsp; Tom: <b><font color='#d4a853'>{pdf_txt(m['tom'])}</font></b>"
         story.append(Paragraph(info_linha, artista_st))
         story.append(Paragraph("MAPA DE ACORDES", ParagraphStyle('ST2', parent=styles['Normal'],
             fontSize=8, fontName='Helvetica-Bold', textColor=colors.white, spaceAfter=12,
             backColor=GOLD, alignment=TA_CENTER)))
-        for secao in m['tabela']:
-            story.append(Paragraph(secao['nome_secao'].upper(), tab_sec_st))
-            if secao.get('grid'):
-                story.append(make_tabela(secao['grid']))
-            story.append(Spacer(1, 0.3*cm))
+        story.extend(grade_flowables(m['tabela'], tab_sec_st, CORES_GRADE))
         story.append(PageBreak())
 
     # ── Modos de geração ──────────────────────────────────────────────────────
@@ -1113,15 +1178,15 @@ def gerar_pdf(rid):
             fontSize=14, fontName='Helvetica', textColor=MUTED, leading=18, spaceAfter=0)
 
         sl_story = []
-        sl_story.append(Paragraph(rep['nome'], sl_titulo))
+        sl_story.append(Paragraph(pdf_txt(rep['nome']), sl_titulo))
         sl_story.append(Paragraph(f"{len(musicas)} músicas", sl_sub))
         sl_story.append(HRFlowable(width="100%", thickness=1, color=GOLD, spaceAfter=20))
 
         for i, m in enumerate(musicas, 1):
             sl_story.append(Paragraph(f"{i:02d}.", sl_num))
-            sl_story.append(Paragraph(m['titulo'], sl_song))
+            sl_story.append(Paragraph(pdf_txt(m['titulo']), sl_song))
             sl_story.append(Paragraph(
-                f"{m['artista']} &nbsp;&nbsp; <font color='#d4a853'><b>Tom: {m['tom']}</b></font>",
+                f"{pdf_txt(m['artista'])} &nbsp;&nbsp; <font color='#d4a853'><b>Tom: {pdf_txt(m['tom'])}</b></font>",
                 sl_info))
             sl_story.append(HRFlowable(width="100%", thickness=0.5, color=GREY_LINE,
                 spaceBefore=14, spaceAfter=14))
@@ -1154,7 +1219,7 @@ def gerar_pdf(rid):
         doc.build(story, onFirstPage=add_page_number, onLaterPages=add_page_number)
         sufixo = '_completo'
 
-    nome_arquivo = rep['nome'].replace(' ', '_') + sufixo + '.pdf'
+    nome_arquivo = sanitizar_pdf(rep['nome']).replace(' ', '_') + sufixo + '.pdf'
     return send_file(output_path, as_attachment=True, download_name=nome_arquivo, mimetype='application/pdf')
 
 # ─── PDF de música individual ─────────────────────────────────────────────────
@@ -1188,52 +1253,30 @@ def pdf_musica(mid):
 
     titulo_st  = ParagraphStyle('T',  parent=styles['Normal'], fontSize=20, fontName='Helvetica-Bold', textColor=DARK, spaceAfter=8, leading=26)
     artista_st = ParagraphStyle('A',  parent=styles['Normal'], fontSize=11, fontName='Helvetica', textColor=MUTED, spaceAfter=16, leading=14)
-    secao_st   = ParagraphStyle('S',  parent=styles['Normal'], fontSize=9,  fontName='Helvetica-Bold', textColor=GOLD, spaceBefore=10, spaceAfter=4, leading=12)
-    acorde_st  = ParagraphStyle('AC', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=DARK, spaceBefore=4, leading=12)
+    secao_st   = ParagraphStyle('S',  parent=styles['Normal'], fontSize=9,  fontName='Helvetica-Bold', textColor=GOLD, spaceBefore=10, spaceAfter=4, leading=12, keepWithNext=1)
+    CHORD      = colors.HexColor('#8a6414')
     letra_st   = ParagraphStyle('L',  parent=styles['Normal'], fontSize=10, fontName='Helvetica', textColor=DARK, spaceAfter=4, leading=14)
-    acorde_mono_st = ParagraphStyle('ACM', parent=acorde_st, fontName='Courier-Bold')
-    letra_mono_st  = ParagraphStyle('LM',  parent=letra_st,  fontName='Courier')
-    tab_sec_st = ParagraphStyle('TS', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=DARK, alignment=TA_CENTER, spaceBefore=12, spaceAfter=8)
+    tab_sec_st = ParagraphStyle('TS', parent=styles['Normal'], fontSize=10, fontName='Helvetica-Bold', textColor=DARK, alignment=TA_CENTER, spaceBefore=12, spaceAfter=8, keepWithNext=1)
 
     doc = SimpleDocTemplate(output_path, pagesize=A4,
         rightMargin=2*cm, leftMargin=2*cm, topMargin=2.5*cm, bottomMargin=2*cm)
     story = []
-    story.append(Paragraph(m['titulo'], titulo_st))
-    story.append(Paragraph(f"{m['artista']} &nbsp; • &nbsp; Tom: <b><font color='#d4a853'>{m['tom']}</font></b>", artista_st))
+    story.append(Paragraph(pdf_txt(m['titulo']), titulo_st))
+    story.append(Paragraph(f"{pdf_txt(m['artista'])} &nbsp; • &nbsp; Tom: <b><font color='#d4a853'>{pdf_txt(m['tom'])}</font></b>", artista_st))
     story.append(HRFlowable(width="100%", thickness=0.5, color=GREY_LINE, spaceAfter=12))
 
     if modo != 'tabela' and m['cifra_tradicional']:
-        secao_atual = ''
-        for linha in m['cifra_tradicional']:
-            secao = linha.get('secao', ''); acordes = linha.get('acordes', ''); letra = linha.get('letra', '')
-            if secao and secao != secao_atual:
-                secao_atual = secao; story.append(Paragraph(secao, secao_st))
-            mono = bool(acordes and letra)
-            if acordes: story.append(Paragraph(texto_pdf(sanitizar_pdf(acordes)), acorde_mono_st if mono else acorde_st))
-            if letra:   story.append(Paragraph(texto_pdf(letra) if mono else letra, letra_mono_st if mono else letra_st))
+        story.extend(cifra_flowables(m['cifra_tradicional'], secao_st, letra_st, CHORD))
         if modo == 'completo' and m['tabela']:
             story.append(Spacer(1, 0.5*cm))
             story.append(HRFlowable(width="100%", thickness=0.5, color=GREY_LINE, spaceAfter=12))
 
     if modo != 'cifra' and m['tabela']:
-        col_w = (A4[0] - 4*cm) / 4
-        for secao in m['tabela']:
-            story.append(Paragraph(secao['nome_secao'].upper(), tab_sec_st))
-            if secao.get('grid'):
-                t = Table(secao['grid'], colWidths=[col_w]*4, rowHeights=32)
-                t.setStyle(TableStyle([
-                    ('GRID', (0,0), (-1,-1), 0.5, GREY_LINE),
-                    ('BACKGROUND', (0,0), (-1,-1), colors.white),
-                    ('ALIGN', (0,0), (-1,-1), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                    ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,-1), 11),
-                    ('TEXTCOLOR', (0,0), (-1,-1), DARK),
-                    ('ROWBACKGROUNDS', (0,0), (-1,-1), [colors.white, GOLD_LIGHT]),
-                ]))
-                story.append(t)
-            story.append(Spacer(1, 0.3*cm))
+        story.extend(grade_flowables(m['tabela'], tab_sec_st,
+            {'linha': GREY_LINE, 'texto': DARK, 'fundo': colors.white, 'fundo_alt': GOLD_LIGHT}))
 
     doc.build(story)
-    nome_arquivo = f"{m['titulo'].replace(' ','_')}_{modo}.pdf"
+    nome_arquivo = f"{sanitizar_pdf(m['titulo']).replace(' ','_')}_{modo}.pdf"
     return send_file(output_path, as_attachment=True, download_name=nome_arquivo, mimetype='application/pdf')
 
 # ─── Stats ─────────────────────────────────────────────────────────────────────
