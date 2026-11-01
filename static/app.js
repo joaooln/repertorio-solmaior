@@ -1428,7 +1428,7 @@ function parseCifra(text) {
     secaoAtual = '';
   };
   for(const line of text.split('\n')) {
-    const t = line.replace(/[​-‍⁠﻿]/g, '').replace(/\s+$/, '');
+    const t = line.replace(/[\u200b-\u200d\u2060\ufeff]/g, '').replace(/\s+$/, '');
     if(!t.trim()) continue;
     const sm = t.trim().match(/^\[(.+)\]$/);
     if(sm) {
@@ -1573,7 +1573,31 @@ function openBackup() {
         <div style="text-align:left;flex:1"><div style="font-weight:600">Importar Backup</div><div style="font-size:12px;color:var(--text-dim)">Restaurar músicas de um arquivo JSON exportado anteriormente</div></div>
         <input type="file" id="import-file" accept=".json" style="display:none" onchange="doImportBackup(this)">
       </div>
+      <button class="btn btn-ghost pdf-opt-btn" onclick="limparBiblioteca()">
+        <span style="font-size:18px">🧹</span>
+        <div style="text-align:left"><div style="font-weight:600">Limpar cifras</div><div style="font-size:12px;color:var(--text-dim)">Corrige acentos, caracteres invisíveis e acordes salvos como letra</div></div>
+      </button>
     </div>`, 'modal-sm');
+}
+
+async function limparBiblioteca() {
+  if (!navigator.onLine) { toast('Conecte-se à internet para limpar as cifras', 'err'); return; }
+  loading('Verificando cifras...');
+  try {
+    const sim = await api.post('/api/biblioteca/limpar', { simular: true });
+    if (sim.erro) throw new Error(sim.erro);
+    unload();
+    if (!sim.alteradas) { toast(`✅ Todas as ${sim.total} músicas já estão limpas`); return; }
+    const lista = sim.titulos.slice(0, 15).join('\n• ') + (sim.alteradas > 15 ? `\n… e mais ${sim.alteradas - 15}` : '');
+    if (!confirm(`${sim.alteradas} de ${sim.total} músicas serão ajustadas:\n\n• ${lista}\n\nFaça um backup antes se quiser. Continuar?`)) return;
+    loading('Limpando cifras...');
+    const r = await api.post('/api/biblioteca/limpar', {});
+    if (r.erro) throw new Error(r.erro);
+    closeModal();
+    toast(`✅ ${r.alteradas} música${r.alteradas !== 1 ? 's' : ''} ajustada${r.alteradas !== 1 ? 's' : ''}`);
+    renderMusicas();
+  } catch (e) { toast('❌ ' + e.message, 'err'); }
+  finally { unload(); }
 }
 
 async function _exportBackup() {

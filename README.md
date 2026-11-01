@@ -113,6 +113,7 @@ Botão **▶ Palco** em cada repertório abre o Modo Apresentação na primeira 
 
 - **Exportar:** baixa toda a biblioteca (músicas + repertórios) como `backup_solmaior.json`
 - **Importar:** restaura a partir de um arquivo exportado anteriormente; itens já existentes são pulados automaticamente
+- **Limpar cifras:** corrige acentos, caracteres invisíveis copiados de sites e linhas de acordes salvas como letra em toda a biblioteca (mostra quais músicas mudam antes de aplicar)
 
 ### Estatísticas
 

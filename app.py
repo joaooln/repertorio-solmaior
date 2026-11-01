@@ -101,22 +101,53 @@ def sanitizar_pdf(texto):
 def pdf_txt(texto):
     return sanitizar_pdf(texto).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-INVISIVEIS_RE = re.compile('[​-‍⁠﻿]')
+INVISIVEIS_RE = re.compile('[\u200b-\u200d\u2060\ufeff]')
 
-def repara_cifra(cifra):
-    # Linhas de acordes salvas como letra (editor antigo) voltam a ficar acima da letra seguinte
-    res = []
-    for l in cifra or []:
-        ac = INVISIVEIS_RE.sub('', l.get('acordes') or '').rstrip()
-        le = INVISIVEIS_RE.sub('', l.get('letra') or '').rstrip()
+def limpar_texto(s):
+    s = unicodedata.normalize('NFC', str(s or ''))
+    return INVISIVEIS_RE.sub('', s).replace('\u00a0', ' ').replace('\t', '    ').replace('\r', '')
+
+def lista_json(v):
+    if isinstance(v, str):
+        try: v = json.loads(v or '[]')
+        except ValueError: return []
+    return v if isinstance(v, list) else []
+
+def limpar_cifra(cifra):
+    # Normaliza texto e devolve linhas de acordes salvas como letra para o campo acordes
+    res, secao = [], ''
+    for l in lista_json(cifra):
+        if not isinstance(l, dict): continue
+        ac = limpar_texto(l.get('acordes')).rstrip()
+        le = limpar_texto(l.get('letra')).rstrip()
         if not ac.strip(): ac = ''
-        if not ac and le and eh_linha_acordes(le.strip()):
-            ac, le = le, ''
+        if not le.strip(): le = ''
+        m = re.match(r'^\[(.+)\]$', le.strip())
+        nova = m.group(1).strip() if m and not ac else limpar_texto(l.get('secao')).strip().strip('[]').strip()
+        if nova:
+            if secao: res.append({'secao': secao, 'acordes': '', 'letra': ''})
+            secao = nova
+        if m and not ac: continue
+        ac = ac.replace('♭', 'b').replace('♯', '#')
+        if not ac and le and eh_linha_acordes(le.strip().replace('♭', 'b').replace('♯', '#')):
+            ac, le = le.replace('♭', 'b').replace('♯', '#'), ''
         ant = res[-1] if res else None
-        if ant and not ac and le and ant['acordes'] and not ant['letra'] and not l.get('secao'):
+        if ant and not ac and le and ant['acordes'] and not ant['letra'] and not secao:
             ant['letra'] = le
             continue
-        res.append({'secao': l.get('secao') or '', 'acordes': ac, 'letra': le})
+        if not ac and not le: continue
+        res.append({'secao': secao, 'acordes': ac, 'letra': le})
+        secao = ''
+    if secao: res.append({'secao': secao, 'acordes': '', 'letra': ''})
+    return res
+
+def limpar_tabela(tabela):
+    res = []
+    for s in lista_json(tabela):
+        if not isinstance(s, dict): continue
+        grid = [[limpar_texto(c).strip() for c in row]
+                for row in (s.get('grid') or []) if isinstance(row, list) and row]
+        res.append({**s, 'nome_secao': limpar_texto(s.get('nome_secao')).strip(), 'grid': grid})
     return res
 
 def cifra_flowables(cifra, secao_st, letra_st, cor_acorde):
@@ -170,7 +201,7 @@ def cifra_flowables(cifra, secao_st, letra_st, cor_acorde):
                     c.drawString(x, PAD + self.h_le + T_AC * self.esc * 0.3, ac)
 
     out, secao_atual = [], ''
-    for l in repara_cifra(cifra):
+    for l in limpar_cifra(cifra):
         if l['secao'] and l['secao'] != secao_atual:
             secao_atual = l['secao']
             out.append(Paragraph(pdf_txt(l['secao']), secao_st))
@@ -428,9 +459,10 @@ def criar_musica():
                        url_origem, favorito, tags, bpm, duracao_min, notas, criado_em, atualizado_em)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT (id) DO NOTHING""",
-                (mid, d['titulo'], d['artista'], d.get('tom','C'), d.get('tom_original') or d.get('tom','C'),
-                 json.dumps(d.get('cifra_tradicional', []), ensure_ascii=False),
-                 json.dumps(d.get('tabela', []), ensure_ascii=False),
+                (mid, limpar_texto(d['titulo']).strip(), limpar_texto(d['artista']).strip(),
+                 d.get('tom','C'), d.get('tom_original') or d.get('tom','C'),
+                 json.dumps(limpar_cifra(d.get('cifra_tradicional', [])), ensure_ascii=False),
+                 json.dumps(limpar_tabela(d.get('tabela', [])), ensure_ascii=False),
                  d.get('url_origem'), d.get('favorito', False),
                  json.dumps(d.get('tags', []), ensure_ascii=False),
                  d.get('bpm'), d.get('duracao_min'), d.get('notas', ''), n, n)
@@ -469,12 +501,12 @@ def atualizar_musica(mid):
                     atualizado_em=%s
                 WHERE id=%s
             """, (
-                d.get('titulo', row['titulo']),
-                d.get('artista', row['artista']),
+                limpar_texto(d.get('titulo', row['titulo'])).strip(),
+                limpar_texto(d.get('artista', row['artista'])).strip(),
                 d.get('tom', row['tom']),
                 d.get('tom_original', row['tom_original']),
-                json.dumps(d.get('cifra_tradicional', json.loads(row['cifra_json'])), ensure_ascii=False),
-                json.dumps(d.get('tabela', json.loads(row['tabela_json'])), ensure_ascii=False),
+                json.dumps(limpar_cifra(d.get('cifra_tradicional', json.loads(row['cifra_json']))), ensure_ascii=False),
+                json.dumps(limpar_tabela(d.get('tabela', json.loads(row['tabela_json']))), ensure_ascii=False),
                 d.get('url_origem', row['url_origem']),
                 d.get('favorito', row.get('favorito', False)),
                 json.dumps(d.get('tags', json.loads(row.get('tags') or '[]')), ensure_ascii=False),
@@ -507,8 +539,8 @@ def transpor_musica(mid):
             cur.execute("SELECT * FROM musicas WHERE id=%s", (mid,))
             row = cur.fetchone()
             if not row: return jsonify({'erro': 'Não encontrada'}), 404
-            cifra = json.loads(row['cifra_json'])
-            tabela = json.loads(row['tabela_json'])
+            cifra = limpar_cifra(json.loads(row['cifra_json']))
+            tabela = limpar_tabela(json.loads(row['tabela_json']))
             tom_orig = row['tom_original']
 
             if reset:
@@ -829,11 +861,11 @@ REGRAS IMPORTANTES:
             return jsonify({'erro': 'A IA retornou um formato inválido. Tente novamente ou adicione a cifra manualmente.'}), 500
 
         # Valida campos obrigatórios
-        titulo = dados.get('titulo', '').strip() or 'Sem título'
-        artista = dados.get('artista', '').strip() or 'Desconhecido'
+        titulo = limpar_texto(dados.get('titulo')).strip() or 'Sem título'
+        artista = limpar_texto(dados.get('artista')).strip() or 'Desconhecido'
         tom = dados.get('tom', 'C').strip() or 'C'
-        cifra = dados.get('cifra_tradicional', [])
-        tabela = dados.get('tabela', [])
+        cifra = limpar_cifra(dados.get('cifra_tradicional', []))
+        tabela = limpar_tabela(dados.get('tabela', []))
 
         if not cifra and not tabela:
             return jsonify({'erro': 'A IA não conseguiu extrair a cifra desta página. Tente outra URL ou adicione manualmente.'}), 400
@@ -1361,8 +1393,8 @@ def importar_biblioteca():
         with get_db() as conn:
             with conn.cursor() as cur:
                 for m in musicas:
-                    cifra  = campo_backup(m, 'cifra_tradicional', 'cifra_json')
-                    tabela = campo_backup(m, 'tabela', 'tabela_json')
+                    cifra  = limpar_cifra(campo_backup(m, 'cifra_tradicional', 'cifra_json'))
+                    tabela = limpar_tabela(campo_backup(m, 'tabela', 'tabela_json'))
                     tags   = campo_backup(m, 'tags', 'tags')
                     cur.execute("SELECT cifra_json, tabela_json FROM musicas WHERE id=%s", (m['id'],))
                     row = cur.fetchone()
@@ -1385,7 +1417,7 @@ def importar_biblioteca():
                         (id,titulo,artista,tom,tom_original,cifra_json,tabela_json,url_origem,
                          favorito,tags,bpm,duracao_min,notas,criado_em,atualizado_em)
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                        (m['id'], m['titulo'], m['artista'], m.get('tom','C'), m.get('tom_original') or m.get('tom','C'),
+                        (m['id'], limpar_texto(m['titulo']).strip(), limpar_texto(m['artista']).strip(), m.get('tom','C'), m.get('tom_original') or m.get('tom','C'),
                          json.dumps(cifra, ensure_ascii=False),
                          json.dumps(tabela, ensure_ascii=False),
                          m.get('url_origem'), m.get('favorito', False),
@@ -1409,6 +1441,33 @@ def importar_biblioteca():
         return jsonify({'ok': True, 'importadas': imported, 'restauradas': restored, 'puladas': skipped})
     except Exception as e:
         return jsonify({'erro': str(e)}), 400
+
+@app.route('/api/biblioteca/limpar', methods=['POST'])
+@admin_required
+def limpar_biblioteca():
+    simular = bool((request.json or {}).get('simular'))
+    alteradas = []
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, titulo, artista, cifra_json, tabela_json FROM musicas")
+            rows = cur.fetchall()
+            for r in rows:
+                novo = {
+                    'titulo': limpar_texto(r['titulo']).strip(),
+                    'artista': limpar_texto(r['artista']).strip(),
+                    'cifra_json': json.dumps(limpar_cifra(json.loads(r['cifra_json'] or '[]')), ensure_ascii=False),
+                    'tabela_json': json.dumps(limpar_tabela(json.loads(r['tabela_json'] or '[]')), ensure_ascii=False),
+                }
+                mudou = {k: v for k, v in novo.items()
+                         if (json.loads(v) != json.loads(r[k] or '[]') if k.endswith('_json') else v != r[k])}
+                if not mudou: continue
+                alteradas.append(novo['titulo'])
+                if not simular:
+                    cur.execute(
+                        f"UPDATE musicas SET {', '.join(f'{k}=%s' for k in mudou)}, atualizado_em=%s WHERE id=%s",
+                        (*mudou.values(), now_iso(), r['id']))
+        if not simular: conn.commit()
+    return jsonify({'ok': True, 'total': len(rows), 'alteradas': len(alteradas), 'titulos': sorted(alteradas)})
 
 # ─── QR Code do repertório ─────────────────────────────────────────────────────
 @app.route('/api/repertorios/<rid>/qrcode', methods=['GET'])

@@ -28,6 +28,7 @@ Guia para Claude Code trabalhar neste repositório. O README é a documentação
 - **PostgreSQL é obrigatório** mesmo em dev — não há fallback para SQLite. Sem `DATABASE_URL` o app quebra no boot (mas o `try/except` em `init_db()` no fim do arquivo só loga aviso).
 - **`sslmode='require'`** está hardcoded em `get_db()`. Se for usar Postgres local sem SSL, vai precisar ajustar.
 - **Modelos Gemini:** `GEMINI_PREFERRED` é uma lista ordenada por preferência (free tier primeiro). `call_gemini()` faz fallback automático em 429/404. Ao adicionar modelos novos, coloque na ordem certa.
+- **Toda gravação de música passa por `limpar_cifra`/`limpar_tabela`/`limpar_texto`** (NFC, sem caracteres invisíveis, acordes que vieram como letra voltam para `acordes`). Rota nova que grava cifra deve usar essas funções; `/api/biblioteca/limpar` reaplica em todo o banco.
 - **Transposição:** acontece tanto no backend (`/api/musicas/<id>/transpor`) quanto no frontend (modo apresentação). O regex em `transpoe_linha` cobre acordes complexos (`Cm7/G`, `F#sus4`, etc.) — mexer com cuidado.
 - **Service Worker:** ao mudar assets do shell, **incrementar `CACHE_NAME`** em `static/sw.js` (`solmaior-shell-vN`) ou os usuários ficam com a versão antiga em cache.
 - **Service Worker NÃO cacheia `/api/*`** — quem cuida do offline para API é o `idb.js` no app.
