@@ -114,6 +114,10 @@
 <script src="/static/app.js"></script>
 <script>
   if ('serviceWorker' in navigator) {
+    const tinhaSW = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (tinhaSW && !_editDirty) location.reload();
+    });
     navigator.serviceWorker.register('/sw.js')
       .then(r => console.log('SW registrado:', r.scope))
       .catch(e => console.warn('SW erro:', e));

@@ -2,7 +2,7 @@
 // Service Worker — Repertório Sol Maior
 // Cache de assets estáticos para carregamento offline do shell
 // ══════════════════════════════════════════════════════════════════════
-const CACHE_NAME    = 'solmaior-shell-v24';
+const CACHE_NAME    = 'solmaior-shell-v25';
 const SHELL_ASSETS  = [
   '/',
   '/static/app.js',
@@ -17,7 +17,7 @@ const SHELL_ASSETS  = [
 self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(SHELL_ASSETS))
+      .then(cache => cache.addAll(SHELL_ASSETS.map(u => new Request(u, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
   );
 });
