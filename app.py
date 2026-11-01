@@ -101,11 +101,14 @@ def sanitizar_pdf(texto):
 def pdf_txt(texto):
     return sanitizar_pdf(texto).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
+INVISIVEIS_RE = re.compile('[​-‍⁠﻿]')
+
 def repara_cifra(cifra):
     # Linhas de acordes salvas como letra (editor antigo) voltam a ficar acima da letra seguinte
     res = []
     for l in cifra or []:
-        ac, le = (l.get('acordes') or '').rstrip(), (l.get('letra') or '').rstrip()
+        ac = INVISIVEIS_RE.sub('', l.get('acordes') or '').rstrip()
+        le = INVISIVEIS_RE.sub('', l.get('letra') or '').rstrip()
         if not ac.strip(): ac = ''
         if not ac and le and eh_linha_acordes(le.strip()):
             ac, le = le, ''

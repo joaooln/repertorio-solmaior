@@ -1428,7 +1428,7 @@ function parseCifra(text) {
     secaoAtual = '';
   };
   for(const line of text.split('\n')) {
-    const t = line.replace(/\s+$/, '');
+    const t = line.replace(/[​-‍⁠﻿]/g, '').replace(/\s+$/, '');
     if(!t.trim()) continue;
     const sm = t.trim().match(/^\[(.+)\]$/);
     if(sm) {
