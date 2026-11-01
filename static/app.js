@@ -980,7 +980,7 @@ function trocarTituloArtista() {
 function gerarGradeDaCifra(cifra) {
   const secoes = [];
   let atual = null;
-  for (const l of cifra || []) {
+  for (const l of parseCifra(cifraParaTexto(cifra))) {
     if (l.secao || !atual) {
       atual = { nome: l.secao || 'Intro', acordes: [] };
       secoes.push(atual);
