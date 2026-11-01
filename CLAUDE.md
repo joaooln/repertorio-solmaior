@@ -11,7 +11,7 @@ Guia para Claude Code trabalhar neste repositório. O README é a documentação
 - **Backend:** um único arquivo `app.py` (Flask) com todas as rotas, helpers de transposição, importação via Gemini, geração de PDF (ReportLab) e QR code. ~940 linhas.
 - **Frontend:** `static/app.js` (vanilla JS, ~66 KB) renderiza tudo dinamicamente no `<div id="app-main">`. Sem build step, sem framework, sem bundler.
 - **Camada offline:** `static/idb.js` é o wrapper IndexedDB; `static/sw.js` é o Service Worker (cache-first para shell, passa direto para `/api/*`).
-- **Banco:** PostgreSQL (Supabase). Três tabelas: `musicas`, `repertorios`, `repertorio_musicas`. Migrações via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` dentro de `init_db()`.
+- **Banco:** PostgreSQL (Supabase). Tabelas: `musicas`, `repertorios`, `repertorio_musicas` e `backups` (cópias JSON completas da biblioteca, as 15 mais recentes; a diária é criada pelo cron em `/health`). Migrações via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` dentro de `init_db()`.
 - **IDs:** `gen_id()` retorna os 8 primeiros chars de um UUID4 — IDs curtos em todo lugar (musicas, repertorios).
 - **Deploy:** Vercel (`vercel.json` aponta tudo para `app.py`) + cron diário em `/health` para keep-alive do Supabase free tier. Procfile existe para Heroku-like (`gunicorn app:app`).
 

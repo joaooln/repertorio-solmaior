@@ -610,6 +610,7 @@ async function renderMusicas() {
         ` : ''}
       `;
     }
+    atualizarAvisoDuplicadas(counts);
     return;
   }
 
@@ -644,6 +645,8 @@ async function renderMusicas() {
              .map(t => `<option value="${t}" ${mTomFilter===t?'selected':''}>${t}</option>`).join('')}
         </select>
       </div>
+
+      <div id="dup-aviso"></div>
 
       <div class="chiprow">
         <button class="chip ${noFilter?'on':''}" onclick="mFavOnly=false;mTagFilter='';renderMusicas()">Todas <span class="chip-count">${counts.length}</span></button>
@@ -695,6 +698,81 @@ async function renderMusicas() {
         ` : ''}
       </div>
     </div>`;
+  atualizarAvisoDuplicadas(counts);
+}
+
+// ── Duplicadas ─────────────────────────────────────────────────────────
+function chaveTitulo(t) {
+  return removeAccents(t || '').toLowerCase().replace(/\(.*?\)|\[.*?\]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function gruposDuplicadas(lista) {
+  const grupos = {};
+  for (const m of lista) (grupos[chaveTitulo(m.titulo)] ||= []).push(m);
+  // A cópia mais completa (mais cifra, editada por último) vem primeiro e fica pré-selecionada
+  return Object.values(grupos).filter(g => g.length > 1).map(g => g.sort((a, b) =>
+    linhasCifra(b) - linhasCifra(a) || (b.atualizado_em || '').localeCompare(a.atualizado_em || '')));
+}
+
+function atualizarAvisoDuplicadas(lista) {
+  const el = document.getElementById('dup-aviso');
+  if (!el) return;
+  const n = gruposDuplicadas(lista).length;
+  el.innerHTML = n ? `
+    <div class="warn-box dup-aviso">
+      <span>⚠ ${n} música${n > 1 ? 's aparecem' : ' aparece'} mais de uma vez na biblioteca</span>
+      <button class="tb-btn" onclick="openDuplicadas()">Revisar</button>
+    </div>` : '';
+}
+
+function linhasCifra(m) {
+  try { return (m.cifra_tradicional || JSON.parse(m.cifra_json || '[]')).length; } catch { return 0; }
+}
+
+async function openDuplicadas() {
+  const grupos = gruposDuplicadas(await api.get('/api/musicas'));
+  if (!grupos.length) { toast('✅ Nenhuma duplicada'); return; }
+  const fmt = d => d ? new Date(d + 'Z').toLocaleDateString('pt-BR') : '—';
+  modal(`
+    <div class="modal-header">
+      <h3 class="modal-title">Músicas duplicadas</h3>
+      <button class="close-btn" onclick="closeModal()">×</button>
+    </div>
+    <div class="info-box">Escolha a cópia que fica. As outras são juntadas nela: ela assume o lugar delas nos repertórios e recebe a cifra ou grade que estiver faltando. Depois as cópias são apagadas. Um backup é feito antes.</div>
+    <div class="dup-grupos">
+      ${grupos.map((g, gi) => `
+        <div class="dup-grupo" data-grupo="${gi}">
+          ${g.map((m, i) => `
+            <label class="dup-item">
+              <input type="radio" name="dup-${gi}" value="${m.id}" ${i === 0 ? 'checked' : ''}>
+              <div class="dup-info">
+                <div class="song-title">${escHtml(m.titulo)}</div>
+                <div class="backups-hint">${escHtml(m.artista)} · tom ${escHtml(m.tom)} · ${linhasCifra(m)} linhas de cifra · editada em ${fmt(m.atualizado_em)}</div>
+              </div>
+              <button class="tb-btn" onclick="event.preventDefault();closeModal();setTimeout(()=>openEdit('${m.id}'),320)">Abrir</button>
+            </label>`).join('')}
+          <div class="dup-acoes">
+            <button class="btn btn-ghost btn-sm" onclick="this.closest('.dup-grupo').remove()">Não são iguais</button>
+            <button class="btn btn-primary btn-sm" onclick="juntarDuplicadas(${gi}, this)">Manter a marcada e juntar</button>
+          </div>
+        </div>`).join('')}
+    </div>`, 'modal-lg');
+  window._gruposDup = grupos;
+}
+
+async function juntarDuplicadas(gi, btn) {
+  const grupoEl = btn.closest('.dup-grupo');
+  const manter = grupoEl.querySelector('input:checked').value;
+  const ids = _gruposDup[gi].map(m => m.id).filter(id => id !== manter);
+  btn.disabled = true;
+  try {
+    const r = await api.post(`/api/musicas/${manter}/juntar`, { ids });
+    if (r.erro) throw new Error(r.erro);
+    grupoEl.remove();
+    toast(`✅ ${ids.length} cópia${ids.length > 1 ? 's juntadas' : ' juntada'}`);
+    if (!document.querySelector('.dup-grupo')) closeModal();
+    renderMusicas();
+  } catch (e) { btn.disabled = false; toast('❌ ' + e.message, 'err'); }
 }
 
 async function toggleFav(id, current) {
@@ -1577,7 +1655,64 @@ function openBackup() {
         <span style="font-size:18px">🧹</span>
         <div style="text-align:left"><div style="font-weight:600">Limpar cifras</div><div style="font-size:12px;color:var(--text-dim)">Corrige acentos, caracteres invisíveis e acordes salvos como letra</div></div>
       </button>
+    </div>
+    <div class="backups-auto">
+      <div class="tb-row">
+        <label>Cópias automáticas</label>
+        <button class="tb-btn" onclick="criarBackupAgora()">+ Fazer cópia agora</button>
+      </div>
+      <div class="backups-hint">Uma cópia por dia fica guardada no servidor (últimas 15). “Recuperar” traz de volta músicas e repertórios apagados sem desfazer suas edições.</div>
+      <div id="backups-lista"><div class="backups-hint">Carregando…</div></div>
     </div>`, 'modal-sm');
+  carregarBackups();
+}
+
+async function carregarBackups() {
+  const el = document.getElementById('backups-lista');
+  if (!el) return;
+  if (!navigator.onLine) { el.innerHTML = '<div class="backups-hint">Disponível só com internet.</div>'; return; }
+  try {
+    const lista = await fetch('/api/backups').then(r => r.json());
+    if (lista.erro) throw new Error(lista.erro);
+    el.innerHTML = lista.length ? lista.map(b => `
+      <div class="backup-row">
+        <div class="backup-info">
+          <div>${new Date(b.criado_em + 'Z').toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</div>
+          <div class="backups-hint">${escHtml(b.motivo)} · ${b.musicas} músicas</div>
+        </div>
+        <a class="tb-btn" href="/api/backups/${b.id}" download title="Baixar arquivo">⬇️</a>
+        <button class="tb-btn" onclick="recuperarBackup('${b.id}')">↺ Recuperar</button>
+      </div>`).join('') : '<div class="backups-hint">Nenhuma cópia ainda. A primeira é feita automaticamente hoje.</div>';
+  } catch (e) {
+    el.innerHTML = `<div class="backups-hint">Não foi possível carregar: ${escHtml(e.message)}</div>`;
+  }
+}
+
+async function criarBackupAgora() {
+  loading('Fazendo cópia...');
+  try {
+    const r = await api.post('/api/backups', {});
+    if (r.erro) throw new Error(r.erro);
+    toast('✅ Cópia guardada no servidor');
+    carregarBackups();
+  } catch (e) { toast('❌ ' + e.message, 'err'); }
+  finally { unload(); }
+}
+
+async function recuperarBackup(id) {
+  if (!confirm('Trazer de volta as músicas e repertórios que existiam nesta cópia e foram apagados?\n\nMúsicas que você editou depois não são alteradas.')) return;
+  loading('Recuperando...');
+  try {
+    const r = await api.post(`/api/backups/${id}/restaurar`, {});
+    if (r.erro) throw new Error(r.erro);
+    closeModal();
+    const partes = [`${r.importadas} música${r.importadas !== 1 ? 's' : ''} recuperada${r.importadas !== 1 ? 's' : ''}`];
+    if (r.restauradas) partes.push(`${r.restauradas} com cifra preenchida`);
+    if (r.repertorios_restaurados) partes.push(`${r.repertorios_restaurados} repertório${r.repertorios_restaurados !== 1 ? 's' : ''} preenchido${r.repertorios_restaurados !== 1 ? 's' : ''}`);
+    toast('✅ ' + partes.join(' · '));
+    renderMusicas();
+  } catch (e) { toast('❌ ' + e.message, 'err'); }
+  finally { unload(); }
 }
 
 async function limparBiblioteca() {
@@ -1675,6 +1810,7 @@ async function doImportBackup(input) {
     closeModal();
     const partes = [`${r.importadas} música${r.importadas!==1?'s':''} importada${r.importadas!==1?'s':''}`];
     if (r.restauradas) partes.push(`${r.restauradas} com cifra restaurada`);
+    if (r.repertorios_restaurados) partes.push(`${r.repertorios_restaurados} repertório${r.repertorios_restaurados!==1?'s':''} preenchido${r.repertorios_restaurados!==1?'s':''}`);
     if (r.puladas) partes.push(`${r.puladas} já completa${r.puladas!==1?'s':''}`);
     toast('✅ ' + partes.join(' · '));
     renderMusicas();
@@ -1750,7 +1886,11 @@ async function openApresentacao(id) {
   const cifra = m.cifra_tradicional || [];
 
   const bpm = m.bpm || 80;
-  const scrollSpeed = Math.max(0.3, Math.min(3, bpm / 80));
+  const pref = apPrefs()[id] || {};
+  const scrollSpeed = pref.speed || Math.max(0.3, Math.min(3, bpm / 80));
+  _apMusicaId = id;
+  _apScrollSpeed = scrollSpeed;
+  _apZoom = pref.zoom || parseFloat(localStorage.getItem('apZoom')) || 1.0;
 
   const html = renderCifraHtml(parseCifra(cifraParaTexto(cifra)));
 
@@ -1805,6 +1945,7 @@ async function openApresentacao(id) {
       <div class="ap-stage" id="ap-body">
         <div class="ap-content" id="ap-view-cifra" style="${_apSoloAcordes ? 'display:none' : ''}">${html || '<div style="color:var(--text-faint);padding:60px;text-align:center;font-family:var(--font-m)">Nenhuma cifra cadastrada</div>'}</div>
         <div class="ap-content" id="ap-view-grid" style="${_apSoloAcordes ? '' : 'display:none'}">${gridHtml}</div>
+        <div id="ap-proxima"></div>
       </div>
       <div class="metro" id="ap-metro" style="display:none">
         <div class="metro-beats">
@@ -1824,6 +1965,39 @@ async function openApresentacao(id) {
   document.addEventListener('keydown', apKeyHandler);
   requestWakeLock();
   document.addEventListener('visibilitychange', handleVisibilityChange);
+  ligarSwipePalco(document.getElementById('ap-body'));
+}
+
+// Preferências por música (fonte e velocidade) guardadas no aparelho
+function apPrefs() {
+  try { return JSON.parse(localStorage.getItem('apPrefs')) || {}; } catch { return {}; }
+}
+
+function salvarApPref(campo, valor) {
+  if (!_apMusicaId) return;
+  const prefs = apPrefs();
+  prefs[_apMusicaId] = { ...prefs[_apMusicaId], [campo]: valor };
+  try { localStorage.setItem('apPrefs', JSON.stringify(prefs)); } catch {}
+}
+
+function ligarSwipePalco(el) {
+  if (!el) return;
+  let x0 = null, y0 = 0;
+  el.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1) { x0 = null; return; }
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+  }, { passive: true });
+  el.addEventListener('touchend', e => {
+    if (x0 === null || !_apRepList.length) return;
+    const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
+    x0 = null;
+    if (Math.abs(dx) > 90 && Math.abs(dx) > Math.abs(dy) * 2) apRepNav(dx < 0 ? 1 : -1);
+  }, { passive: true });
+}
+
+function noFimDoPalco() {
+  const b = document.getElementById('ap-body');
+  return !b || b.scrollTop + b.clientHeight >= b.scrollHeight - 4;
 }
 
 let _apWakeLock = null;
@@ -1867,10 +2041,12 @@ let _apRepList        = [];
 let _apRepIdx         = -1;
 let _apSoloAcordes    = localStorage.getItem('apSoloAcordes') === 'true';
 let _apZoom           = parseFloat(localStorage.getItem('apZoom')) || 1.0;
+let _apMusicaId       = null;
 
 function changeApZoom(delta) {
   _apZoom = Math.max(0.7, Math.min(1.8, Math.round((_apZoom + delta) * 10) / 10));
   localStorage.setItem('apZoom', _apZoom.toString());
+  salvarApPref('zoom', _apZoom);
   const root = document.getElementById('ap-root');
   if (root) {
     root.style.setProperty('--ap-zoom', _apZoom);
@@ -1925,6 +2101,11 @@ function _renderRepNav() {
     </button>
     <button class="ap-btn" onclick="apRepNav(1)" title="Próxima música">▶</button>`;
   bar.querySelector('.ap-controls').before(nav);
+  const prox = _apRepList[_apRepIdx + 1];
+  const pe = document.getElementById('ap-proxima');
+  if (pe) pe.innerHTML = prox
+    ? `<button class="ap-proxima" onclick="apRepNav(1)"><span>Próxima</span><b>${escHtml(prox.titulo)}</b><em>${escHtml(prox.tom || '')}</em> ▶</button>`
+    : '<div class="ap-proxima fim">Fim do repertório</div>';
 }
 
 async function apRepNav(dir) {
@@ -1975,20 +2156,32 @@ async function apRepNavTo(idx) {
 function toggleAutoScroll() {
   _apScrollActive = !_apScrollActive;
   const btn = document.getElementById('ap-scroll-btn');
+  cancelAnimationFrame(_apScrollInterval);
   if (_apScrollActive) {
     btn.textContent = '⏸'; btn.classList.add('on');
-    _apScrollInterval = setInterval(() => {
+    // Acumula frações de pixel: scrollTop arredonda e velocidades < 1× ficariam paradas
+    let ultimo = null, resto = 0;
+    const passo = t => {
       const body = document.getElementById('ap-body');
-      if (body) body.scrollTop += _apScrollSpeed;
-    }, 30);
+      if (!body || !_apScrollActive) return;
+      if (ultimo !== null) {
+        resto += _apScrollSpeed * 33 * (t - ultimo) / 1000;
+        const px = Math.floor(resto);
+        if (px) { body.scrollTop += px; resto -= px; }
+        if (noFimDoPalco()) { toggleAutoScroll(); return; }
+      }
+      ultimo = t;
+      _apScrollInterval = requestAnimationFrame(passo);
+    };
+    _apScrollInterval = requestAnimationFrame(passo);
   } else {
     btn.textContent = '▶'; btn.classList.remove('on');
-    clearInterval(_apScrollInterval);
   }
 }
 
 function setScrollSpeed(v) {
   _apScrollSpeed = parseFloat(v);
+  salvarApPref('speed', _apScrollSpeed);
   const lbl = document.getElementById('ap-speed-val');
   if (lbl) lbl.textContent = parseFloat(v).toFixed(1) + '×';
 }
@@ -2052,6 +2245,7 @@ function apKeyHandler(e) {
   if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); toggleAutoScroll(); return; }
   if (e.key === 'PageDown' || e.key === 'ArrowDown') {
     e.preventDefault();
+    if (e.key === 'PageDown' && _apRepList.length && noFimDoPalco()) { apRepNav(1); return; }
     const b = document.getElementById('ap-body');
     if (b) b.scrollTop += (e.key === 'PageDown' ? 350 : 80);
     return;
@@ -2097,7 +2291,7 @@ function apKeyHandler(e) {
 }
 
 function closeApresentacao(resetRep = true) {
-  clearInterval(_apScrollInterval);
+  cancelAnimationFrame(_apScrollInterval);
   clearInterval(_apMetroInterval);
   _apScrollActive = false;
   _apMetroActive = false;

@@ -591,9 +591,19 @@ button { font-family: inherit; cursor: pointer; }
 }
 .ap-stage {
   flex: 1; overflow-y: auto;
-  display: flex; justify-content: center;
+  display: flex; flex-direction: column; align-items: center;
   position: relative; z-index: 1;
 }
+#ap-proxima { width: 100%; max-width: 920px; padding: 0 50px 160px; margin-top: -140px; }
+.ap-proxima {
+  width: 100%; display: flex; align-items: baseline; gap: 12px;
+  padding: 18px 22px; border-radius: 14px; border: 1px dashed color-mix(in oklab, var(--accent) 40%, transparent);
+  background: transparent; color: var(--text); cursor: pointer; font-family: var(--font-b); text-align: left;
+}
+.ap-proxima span { font-size: 12px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--text-dim); }
+.ap-proxima b { flex: 1; font-size: 20px; }
+.ap-proxima em { font-style: normal; font-family: var(--font-m); color: var(--accent); }
+.ap-proxima.fim { justify-content: center; color: var(--text-dim); cursor: default; }
 .ap-content { width: 100%; max-width: 920px; padding: 60px 50px 200px; }
 .ap-secao-l {
   font-family: var(--font-b); font-weight: 600; font-size: 12px;
@@ -897,6 +907,7 @@ select {
   .side { display: none; }
   .main { margin-left: 0; padding-bottom: 84px; }
   .ap-content { padding: 32px 20px 120px; }
+  #ap-proxima { padding: 0 20px 100px; margin-top: -80px; }
   .ap-acorde-l { font-size: calc(22px * var(--ap-zoom, 1)); }
   .ap-letra-l  { font-size: calc(20px * var(--ap-zoom, 1)); }
   .two-col { grid-template-columns: 1fr; }
@@ -1349,3 +1360,20 @@ select {
   .ap-seg-ch { font-size: calc(19px * var(--ap-zoom, 1)); }
   .ap-seg-ly { font-size: calc(20px * var(--ap-zoom, 1)); }
 }
+
+/* ── Cópias automáticas (backup) ─────────────────────────────────────── */
+.backups-auto { border-top: 1px solid var(--line); padding-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+.backups-hint { font-size: 12px; color: var(--text-dim); }
+#backups-lista { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow-y: auto; }
+.backup-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
+.backup-info { flex: 1; min-width: 0; }
+.backup-row a.tb-btn { text-decoration: none; }
+
+/* ── Duplicadas ──────────────────────────────────────────────────────── */
+.dup-aviso { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.dup-grupos { display: flex; flex-direction: column; gap: 14px; }
+.dup-grupo { border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.dup-item { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; cursor: pointer; }
+.dup-item:has(input:checked) { background: rgba(255,255,255,0.04); }
+.dup-info { flex: 1; min-width: 0; }
+.dup-acoes { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding-top: 4px; }

@@ -4,7 +4,7 @@ Repertório Sol Maior — Backend Flask + SQLite
 import os, json, re, subprocess, sys, psycopg2, io, unicodedata, base64
 from contextlib import contextmanager
 from psycopg2.extras import RealDictCursor
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template, send_file
 from werkzeug.exceptions import HTTPException
 import google.generativeai as genai
@@ -69,6 +69,14 @@ def init_db():
                 PRIMARY KEY (repertorio_id, musica_id),
                 FOREIGN KEY (repertorio_id) REFERENCES repertorios(id) ON DELETE CASCADE,
                 FOREIGN KEY (musica_id)     REFERENCES musicas(id)      ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS backups (
+                id        TEXT PRIMARY KEY,
+                criado_em TEXT NOT NULL,
+                motivo    TEXT NOT NULL,
+                musicas   INTEGER NOT NULL,
+                dados     TEXT NOT NULL
             );
             """)
             # Migração: adiciona colunas novas se ainda não existirem
@@ -527,6 +535,37 @@ def deletar_musica(mid):
             cur.execute("DELETE FROM musicas WHERE id=%s", (mid,))
         conn.commit()
     return jsonify({'ok': True})
+
+@app.route('/api/musicas/<mid>/juntar', methods=['POST'])
+@admin_required
+def juntar_musicas(mid):
+    # Junta cópias duplicadas em <mid>: herda lugar nos repertórios e cifra/grade que faltarem
+    ids = [i for i in (request.json or {}).get('ids', []) if i != mid]
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT cifra_json, tabela_json FROM musicas WHERE id=%s", (mid,))
+            alvo = cur.fetchone()
+            if not alvo: return jsonify({'erro': 'Não encontrada'}), 404
+            if not ids: return jsonify({'ok': True, 'juntadas': 0})
+            salvar_backup(cur, 'antes de juntar duplicadas')
+            cifra, tabela = json.loads(alvo['cifra_json'] or '[]'), json.loads(alvo['tabela_json'] or '[]')
+            juntadas = 0
+            for dup in ids:
+                cur.execute("SELECT cifra_json, tabela_json FROM musicas WHERE id=%s", (dup,))
+                row = cur.fetchone()
+                if not row: continue
+                if not cifra: cifra = json.loads(row['cifra_json'] or '[]')
+                if not tabela: tabela = json.loads(row['tabela_json'] or '[]')
+                cur.execute("""INSERT INTO repertorio_musicas (repertorio_id, musica_id, posicao)
+                               SELECT repertorio_id, %s, posicao FROM repertorio_musicas WHERE musica_id=%s
+                               ON CONFLICT DO NOTHING""", (mid, dup))
+                cur.execute("DELETE FROM repertorio_musicas WHERE musica_id=%s", (dup,))
+                cur.execute("DELETE FROM musicas WHERE id=%s", (dup,))
+                juntadas += 1
+            cur.execute("UPDATE musicas SET cifra_json=%s, tabela_json=%s, atualizado_em=%s WHERE id=%s",
+                        (json.dumps(cifra, ensure_ascii=False), json.dumps(tabela, ensure_ascii=False), now_iso(), mid))
+        conn.commit()
+    return jsonify({'ok': True, 'juntadas': juntadas})
 
 @app.route('/api/musicas/<mid>/transpor', methods=['POST'])
 @admin_required
@@ -1348,29 +1387,43 @@ def get_stats():
     })
 
 # ─── Backup export / import ────────────────────────────────────────────────────
+def montar_backup(cur):
+    cur.execute("SELECT * FROM musicas ORDER BY titulo")
+    musicas = []
+    for row in cur.fetchall():
+        m = dict(row)
+        m['cifra_tradicional'] = json.loads(m['cifra_json'])
+        m['tabela'] = json.loads(m['tabela_json'])
+        m['tags'] = json.loads(m.get('tags') or '[]')
+        musicas.append(m)
+    cur.execute("SELECT * FROM repertorios ORDER BY nome")
+    reps = []
+    for r in cur.fetchall():
+        rep = dict(r)
+        cur.execute("SELECT musica_id, posicao FROM repertorio_musicas WHERE repertorio_id=%s ORDER BY posicao", (r['id'],))
+        rep['musicas_ids'] = [row['musica_id'] for row in cur.fetchall()]
+        reps.append(rep)
+    return {'musicas': musicas, 'repertorios': reps, 'exportado_em': now_iso()}
+
+BACKUPS_MANTIDOS = 15
+
+def salvar_backup(cur, motivo):
+    dados = montar_backup(cur)
+    cur.execute("INSERT INTO backups (id, criado_em, motivo, musicas, dados) VALUES (%s,%s,%s,%s,%s)",
+                (gen_id(), now_iso(), motivo, len(dados['musicas']), json.dumps(dados, ensure_ascii=False)))
+    cur.execute("DELETE FROM backups WHERE id NOT IN (SELECT id FROM backups ORDER BY criado_em DESC LIMIT %s)",
+                (BACKUPS_MANTIDOS,))
+
+def arquivo_backup(dados, nome='backup_solmaior.json'):
+    buf = io.BytesIO(json.dumps(dados, ensure_ascii=False, indent=2).encode('utf-8'))
+    return send_file(buf, as_attachment=True, download_name=nome, mimetype='application/json')
+
 @app.route('/api/biblioteca/export', methods=['GET'])
 def exportar_biblioteca():
     with get_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM musicas ORDER BY titulo")
-            musicas = []
-            for row in cur.fetchall():
-                m = dict(row)
-                m['cifra_tradicional'] = json.loads(m['cifra_json'])
-                m['tabela'] = json.loads(m['tabela_json'])
-                m['tags'] = json.loads(m.get('tags') or '[]')
-                musicas.append(m)
-            cur.execute("SELECT * FROM repertorios ORDER BY nome")
-            reps = []
-            for r in cur.fetchall():
-                rep = dict(r)
-                cur.execute("SELECT musica_id, posicao FROM repertorio_musicas WHERE repertorio_id=%s ORDER BY posicao", (r['id'],))
-                rep['musicas_ids'] = [row['musica_id'] for row in cur.fetchall()]
-                reps.append(rep)
-    data = json.dumps({'musicas': musicas, 'repertorios': reps, 'exportado_em': now_iso()},
-                      ensure_ascii=False, indent=2)
-    buf = io.BytesIO(data.encode('utf-8'))
-    return send_file(buf, as_attachment=True, download_name='backup_solmaior.json', mimetype='application/json')
+            dados = montar_backup(cur)
+    return arquivo_backup(dados)
 
 def campo_backup(m, campo, campo_json):
     # Backups do cache offline trazem os campos como string JSON (cifra_json, tabela_json)
@@ -1381,66 +1434,117 @@ def campo_backup(m, campo, campo_json):
         except ValueError: v = []
     return v or []
 
+def restaurar_dados(cur, data):
+    # Insere o que falta e preenche cifra/grade vazias; nunca sobrescreve edições
+    musicas = data.get('musicas', [])
+    reps    = data.get('repertorios', [])
+    n = now_iso()
+    imported, skipped, restored = 0, 0, 0
+    novas = set()
+    for m in musicas:
+        cifra  = limpar_cifra(campo_backup(m, 'cifra_tradicional', 'cifra_json'))
+        tabela = limpar_tabela(campo_backup(m, 'tabela', 'tabela_json'))
+        tags   = campo_backup(m, 'tags', 'tags')
+        cur.execute("SELECT cifra_json, tabela_json FROM musicas WHERE id=%s", (m['id'],))
+        row = cur.fetchone()
+        if row:
+            # Preenche só o que está vazio no banco; nunca sobrescreve edições
+            sets = {}
+            if cifra and not json.loads(row['cifra_json'] or '[]'):
+                sets['cifra_json'] = json.dumps(cifra, ensure_ascii=False)
+            if tabela and not json.loads(row['tabela_json'] or '[]'):
+                sets['tabela_json'] = json.dumps(tabela, ensure_ascii=False)
+            if sets:
+                cur.execute(
+                    f"UPDATE musicas SET {', '.join(f'{k}=%s' for k in sets)}, atualizado_em=%s WHERE id=%s",
+                    (*sets.values(), n, m['id']))
+                restored += 1
+            else:
+                skipped += 1
+            continue
+        cur.execute("""INSERT INTO musicas
+            (id,titulo,artista,tom,tom_original,cifra_json,tabela_json,url_origem,
+             favorito,tags,bpm,duracao_min,notas,criado_em,atualizado_em)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (m['id'], limpar_texto(m['titulo']).strip(), limpar_texto(m['artista']).strip(), m.get('tom','C'), m.get('tom_original') or m.get('tom','C'),
+             json.dumps(cifra, ensure_ascii=False),
+             json.dumps(tabela, ensure_ascii=False),
+             m.get('url_origem'), m.get('favorito', False),
+             json.dumps(tags, ensure_ascii=False),
+             m.get('bpm'), m.get('duracao_min'), m.get('notas',''),
+             m.get('criado_em', n), m.get('atualizado_em', n)))
+        imported += 1
+        novas.add(m['id'])
+    reps_restaurados = 0
+    for r in reps:
+        cur.execute("SELECT id FROM repertorios WHERE id=%s", (r['id'],))
+        so_novas = False
+        if cur.fetchone():
+            # Repertório existente: preenche se estiver vazio; senão só devolve as músicas recuperadas agora
+            cur.execute("SELECT COUNT(*) AS n FROM repertorio_musicas WHERE repertorio_id=%s", (r['id'],))
+            so_novas = cur.fetchone()['n'] > 0
+            if not so_novas: reps_restaurados += 1
+        else:
+            cur.execute("INSERT INTO repertorios (id,nome,criado_em,atualizado_em) VALUES (%s,%s,%s,%s)",
+                        (r['id'], r['nome'], r.get('criado_em', n), r.get('atualizado_em', n)))
+        ids = r.get('musicas_ids') or [
+            x['id'] for x in sorted(r.get('musicas', []), key=lambda x: x.get('posicao', 0))]
+        for i, mid in enumerate(ids):
+            if so_novas and mid not in novas: continue
+            cur.execute("SELECT id FROM musicas WHERE id=%s", (mid,))
+            if cur.fetchone():
+                cur.execute("""INSERT INTO repertorio_musicas (repertorio_id,musica_id,posicao)
+                    VALUES (%s,%s,%s) ON CONFLICT DO NOTHING""", (r['id'], mid, i))
+    return {'importadas': imported, 'restauradas': restored, 'puladas': skipped, 'repertorios_restaurados': reps_restaurados}
+
 @app.route('/api/biblioteca/import', methods=['POST'])
 @admin_required
 def importar_biblioteca():
     try:
-        data = request.json
-        musicas = data.get('musicas', [])
-        reps    = data.get('repertorios', [])
-        n = now_iso()
-        imported, skipped, restored = 0, 0, 0
         with get_db() as conn:
             with conn.cursor() as cur:
-                for m in musicas:
-                    cifra  = limpar_cifra(campo_backup(m, 'cifra_tradicional', 'cifra_json'))
-                    tabela = limpar_tabela(campo_backup(m, 'tabela', 'tabela_json'))
-                    tags   = campo_backup(m, 'tags', 'tags')
-                    cur.execute("SELECT cifra_json, tabela_json FROM musicas WHERE id=%s", (m['id'],))
-                    row = cur.fetchone()
-                    if row:
-                        # Preenche só o que está vazio no banco; nunca sobrescreve edições
-                        sets = {}
-                        if cifra and not json.loads(row['cifra_json'] or '[]'):
-                            sets['cifra_json'] = json.dumps(cifra, ensure_ascii=False)
-                        if tabela and not json.loads(row['tabela_json'] or '[]'):
-                            sets['tabela_json'] = json.dumps(tabela, ensure_ascii=False)
-                        if sets:
-                            cur.execute(
-                                f"UPDATE musicas SET {', '.join(f'{k}=%s' for k in sets)}, atualizado_em=%s WHERE id=%s",
-                                (*sets.values(), n, m['id']))
-                            restored += 1
-                        else:
-                            skipped += 1
-                        continue
-                    cur.execute("""INSERT INTO musicas
-                        (id,titulo,artista,tom,tom_original,cifra_json,tabela_json,url_origem,
-                         favorito,tags,bpm,duracao_min,notas,criado_em,atualizado_em)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                        (m['id'], limpar_texto(m['titulo']).strip(), limpar_texto(m['artista']).strip(), m.get('tom','C'), m.get('tom_original') or m.get('tom','C'),
-                         json.dumps(cifra, ensure_ascii=False),
-                         json.dumps(tabela, ensure_ascii=False),
-                         m.get('url_origem'), m.get('favorito', False),
-                         json.dumps(tags, ensure_ascii=False),
-                         m.get('bpm'), m.get('duracao_min'), m.get('notas',''),
-                         m.get('criado_em', n), m.get('atualizado_em', n)))
-                    imported += 1
-                for r in reps:
-                    cur.execute("SELECT id FROM repertorios WHERE id=%s", (r['id'],))
-                    if cur.fetchone(): continue
-                    cur.execute("INSERT INTO repertorios (id,nome,criado_em,atualizado_em) VALUES (%s,%s,%s,%s)",
-                                (r['id'], r['nome'], r.get('criado_em', n), r.get('atualizado_em', n)))
-                    ids = r.get('musicas_ids') or [
-                        x['id'] for x in sorted(r.get('musicas', []), key=lambda x: x.get('posicao', 0))]
-                    for i, mid in enumerate(ids):
-                        cur.execute("SELECT id FROM musicas WHERE id=%s", (mid,))
-                        if cur.fetchone():
-                            cur.execute("""INSERT INTO repertorio_musicas (repertorio_id,musica_id,posicao)
-                                VALUES (%s,%s,%s) ON CONFLICT DO NOTHING""", (r['id'], mid, i))
+                res = restaurar_dados(cur, request.json)
             conn.commit()
-        return jsonify({'ok': True, 'importadas': imported, 'restauradas': restored, 'puladas': skipped})
+        return jsonify({'ok': True, **res})
     except Exception as e:
         return jsonify({'erro': str(e)}), 400
+
+@app.route('/api/backups', methods=['GET'])
+def listar_backups():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, criado_em, motivo, musicas FROM backups ORDER BY criado_em DESC")
+            return jsonify(cur.fetchall())
+
+@app.route('/api/backups', methods=['POST'])
+@admin_required
+def criar_backup():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            salvar_backup(cur, 'manual')
+        conn.commit()
+    return jsonify({'ok': True})
+
+@app.route('/api/backups/<bid>', methods=['GET'])
+def baixar_backup(bid):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT criado_em, dados FROM backups WHERE id=%s", (bid,))
+            row = cur.fetchone()
+    if not row: return jsonify({'erro': 'Backup não encontrado'}), 404
+    return arquivo_backup(json.loads(row['dados']), f"backup_solmaior_{row['criado_em'][:10]}.json")
+
+@app.route('/api/backups/<bid>/restaurar', methods=['POST'])
+@admin_required
+def restaurar_backup(bid):
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT dados FROM backups WHERE id=%s", (bid,))
+            row = cur.fetchone()
+            if not row: return jsonify({'erro': 'Backup não encontrado'}), 404
+            res = restaurar_dados(cur, json.loads(row['dados']))
+        conn.commit()
+    return jsonify({'ok': True, **res})
 
 @app.route('/api/biblioteca/limpar', methods=['POST'])
 @admin_required
@@ -1462,6 +1566,8 @@ def limpar_biblioteca():
                          if (json.loads(v) != json.loads(r[k] or '[]') if k.endswith('_json') else v != r[k])}
                 if not mudou: continue
                 alteradas.append(novo['titulo'])
+                if not simular and len(alteradas) == 1:
+                    salvar_backup(cur, 'antes da limpeza')
                 if not simular:
                     cur.execute(
                         f"UPDATE musicas SET {', '.join(f'{k}=%s' for k in mudou)}, atualizado_em=%s WHERE id=%s",
@@ -1499,6 +1605,12 @@ def health():
         with get_db() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
+                # O cron diário do Vercel chama esta rota: aproveita para guardar o backup do dia
+                cur.execute("SELECT MAX(criado_em) AS ultimo FROM backups WHERE motivo='diário'")
+                ultimo = cur.fetchone()['ultimo']
+                if not ultimo or ultimo < (datetime.utcnow() - timedelta(hours=20)).isoformat():
+                    salvar_backup(cur, 'diário')
+            conn.commit()
         return jsonify({"status": "ok"}), 200
     except Exception as e:
         return jsonify({"status": "error", "detail": str(e)}), 500

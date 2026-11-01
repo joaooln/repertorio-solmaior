@@ -85,6 +85,7 @@ solmaior/
 | **BPM e duração** | Registre o andamento e tempo de cada música |
 | **Notas internas** | Campo livre por música para anotações de performance |
 | **Busca e filtros** | Filtre por texto, tom, estilo ou favoritas |
+| **Duplicadas** | Aviso quando o mesmo título aparece mais de uma vez; escolha a cópia que fica e as outras são juntadas nela (lugar nos repertórios e cifra/grade que faltar) |
 | **PDF individual** | Gere PDF de uma única música (cifra, tabela ou completo) |
 
 ### Repertórios
@@ -101,18 +102,25 @@ solmaior/
 
 Aberto a partir de qualquer música, ocupa a tela toda com fonte grande — ideal para usar no palco.
 
-- **Auto-scroll** ajustável por velocidade (barra de range)
+- **Auto-scroll** ajustável por velocidade (barra de range); para sozinho no fim da música
+- **Fonte e velocidade lembradas por música** (guardadas no aparelho)
 - **Metrônomo integrado** com clique sonoro (Web Audio API) e indicador visual pulsante
+- **Tela sempre acesa** enquanto o modo está aberto
 - **Controles por teclado:** Espaço = play/pause scroll · ↑↓ = scroll manual · Esc = fechar
 
 ### Modo Palco (Repertório)
 
 Botão **▶ Palco** em cada repertório abre o Modo Apresentação na primeira música e adiciona uma navegação **◀ N/Total ▶** na barra superior para pular entre as músicas do show sem sair da tela cheia.
 
+- **Próxima música** aparece no fim de cada cifra; um toque abre
+- **Celular:** deslize para a esquerda/direita para trocar de música
+- **Pedal Bluetooth:** PageDown rola a cifra e, no fim dela, passa para a próxima música; ←/→ trocam de música
+
 ### Backup
 
 - **Exportar:** baixa toda a biblioteca (músicas + repertórios) como `backup_solmaior.json`
-- **Importar:** restaura a partir de um arquivo exportado anteriormente; itens já existentes são pulados automaticamente
+- **Importar:** restaura a partir de um arquivo exportado anteriormente; itens existentes não são sobrescritos (só cifras, grades e repertórios vazios são preenchidos)
+- **Cópias automáticas:** o servidor guarda uma cópia por dia (cron do Vercel em `/health`) e outra antes de limpar ou juntar duplicadas, mantendo as 15 mais recentes. Cada uma pode ser baixada ou usada para **Recuperar** músicas e repertórios apagados sem desfazer edições
 - **Limpar cifras:** corrige acentos, caracteres invisíveis copiados de sites e linhas de acordes salvas como letra em toda a biblioteca (mostra quais músicas mudam antes de aplicar)
 
 ### Estatísticas
