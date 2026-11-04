@@ -12,10 +12,12 @@ function escAttr(s) {
 
 const CHORD_TOKEN_RE = /^[A-G][#b]?(?:maj|min|dim|aug|sus|add|m|M|º|°|\+|(?<=[#b])o)?(?:[0-9]{1,2}|M|[#b+-][0-9]{1,2}|sus[0-9]?|add[0-9]{1,2}|dim|\([^)]*\))*(?:\/[A-G][#b]?)?\.?$/;
 
+const REPETE_RE = /^\(?(?:x(\d+)|(\d+)x)\)?$/i;
+
 function isChordLine(linha) {
   const tokens = linha.trim().split(/\s+/);
   return tokens[0] !== '' && tokens.every(t =>
-    CHORD_TOKEN_RE.test(t) || ['|', '%', '-'].includes(t) || /^\(?x\d+\)?$/i.test(t));
+    CHORD_TOKEN_RE.test(t) || ['|', '%', '-'].includes(t) || REPETE_RE.test(t));
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -1055,6 +1057,15 @@ function trocarTituloArtista() {
   renderEditModal();
 }
 
+function separarVezes(nome) {
+  const m = (nome || '').match(/^(.*?)\s+[x×](\d+)$/i);
+  return m ? { nome: m[1], vezes: Number(m[2]) || 1 } : { nome: nome || '', vezes: 1 };
+}
+
+function juntarVezes(nome, vezes) {
+  return vezes > 1 ? `${nome} x${vezes}` : nome;
+}
+
 function gerarGradeDaCifra(cifra) {
   const secoes = [];
   let atual = null;
@@ -1064,10 +1075,14 @@ function gerarGradeDaCifra(cifra) {
       secoes.push(atual);
     }
     for (const tk of (l.acordes || '').split(/\s+/)) {
-      if (CHORD_TOKEN_RE.test(tk) && atual.acordes[atual.acordes.length - 1] !== tk) atual.acordes.push(tk);
+      const rep = tk.match(REPETE_RE);
+      if (rep) atual.acordes.push(`x${rep[1] || rep[2]}`);
+      else if (tk === '%') atual.acordes.push(tk);
+      else if (CHORD_TOKEN_RE.test(tk) && atual.acordes[atual.acordes.length - 1] !== tk) atual.acordes.push(tk);
     }
   }
   const tabela = [], vistos = new Set(), contagem = {};
+  let ultima = null;
   for (const s of secoes) {
     if (!s.acordes.length) continue;
     const grid = [];
@@ -1076,11 +1091,21 @@ function gerarGradeDaCifra(cifra) {
       while (row.length < 4) row.push('%');
       grid.push(row);
     }
-    const chave = s.nome + JSON.stringify(grid);
+    const { nome, vezes } = separarVezes(s.nome);
+    const chave = nome + JSON.stringify(grid);
+    // Seção igual logo em seguida vira repetição; igual mais adiante não precisa aparecer de novo
+    if (ultima && ultima.chave === chave) {
+      ultima.vezes += vezes;
+      ultima.item.nome_secao = juntarVezes(ultima.rotulo, ultima.vezes);
+      continue;
+    }
     if (vistos.has(chave)) continue;
     vistos.add(chave);
-    contagem[s.nome] = (contagem[s.nome] || 0) + 1;
-    tabela.push({ nome_secao: contagem[s.nome] > 1 ? `${s.nome} ${contagem[s.nome]}` : s.nome, grid });
+    contagem[nome] = (contagem[nome] || 0) + 1;
+    const rotulo = contagem[nome] > 1 ? `${nome} ${contagem[nome]}` : nome;
+    const item = { nome_secao: juntarVezes(rotulo, vezes), grid };
+    tabela.push(item);
+    ultima = { chave, vezes, rotulo, item };
   }
   return tabela;
 }
@@ -1126,6 +1151,7 @@ let editTab = 'info';
 let _editDirty = false;
 let _editPreview = false;
 let _previewTimer = null;
+let _gradeTexto = false;
 
 const SECOES_CIFRA = ['Intro', 'Verso', 'Pré-Refrão', 'Refrão', 'Ponte', 'Solo', 'Final'];
 
@@ -1270,17 +1296,25 @@ function renderEditModal() {
     ` : ''}
 
     ${editTab==='tabela' ? `
-      <div class="info-box">
-        <strong>## Nome da Seção</strong> cria um novo bloco na tabela geral.<br>
-        Acordes separados por <strong>|</strong>, sendo 4 por linha sempre. Utilize <strong>%</strong> para repetir compasso.
-      </div>
-      <div class="form-group">
-        <div class="tb-row">
-          <label>Editor de Tabela de Acordes</label>
+      <div class="tb-row grade-barra">
+        <label>${_gradeTexto ? 'Grade em texto' : 'Grade de acordes'}</label>
+        <div class="tb-group">
           <button class="tb-btn" onclick="gerarGradeEditor()">↻ Gerar a partir da cifra</button>
+          <button class="tb-btn" onclick="alternarGradeTexto()">${_gradeTexto ? '▦ Editor visual' : '✎ Editar como texto'}</button>
         </div>
-        <textarea id="e-tabela" class="cifra-textarea" spellcheck="false" style="min-height:400px;">${escHtml(tabelaParaTexto(m.tabela))}</textarea>
       </div>
+      ${_gradeTexto ? `
+        <div class="info-box">
+          <strong>## Nome da Seção</strong> cria um novo bloco na tabela geral.<br>
+          Acordes separados por <strong>|</strong>, sendo 4 por linha sempre. Utilize <strong>%</strong> para repetir compasso e <strong>## Refrão x2</strong> para repetir a seção.
+        </div>
+        <div class="form-group">
+          <textarea id="e-tabela" class="cifra-textarea" spellcheck="false" style="min-height:400px;">${escHtml(tabelaParaTexto(m.tabela))}</textarea>
+        </div>
+      ` : `
+        <div class="editor-hint"><span>Toque em um compasso para editar. Arraste para trocar de lugar (no celular, segure antes de arrastar). <b>%</b> repete o compasso anterior.</span></div>
+        <div id="grade-visual"></div>
+      `}
     ` : ''}
 
     <div class="modal-footer">
@@ -1298,6 +1332,7 @@ function renderEditModal() {
   `, 'modal-lg modal-editor');
 
   document.querySelector('#modal-root .modal').addEventListener('input', () => { _editDirty = true; });
+  ligarGradeVisual();
   _modalGuard = () => {
     if (!_editDirty) return true;
     const ok = confirm(novo ? 'Descartar esta importação? A música não será salva.' : 'Descartar as alterações não salvas?');
@@ -1318,6 +1353,7 @@ function switchTab(tab) {
 
 function collectEdits() {
   if(!editM) return;
+  fecharCelulaGrade();
   const val = id => document.getElementById(id)?.value;
   if(val('e-titulo')   !== undefined) editM.titulo   = val('e-titulo').trim();
   if(val('e-artista')  !== undefined) editM.artista  = val('e-artista').trim();
@@ -1374,6 +1410,236 @@ function togglePreviewCifra() {
   if (btn) { btn.classList.toggle('on', _editPreview); btn.textContent = _editPreview ? '✎ Editar' : '👁 Visualizar'; }
   atualizarPreviewCifra();
 }
+
+// ── Editor visual da grade ─────────────────────────────────────────────
+function alternarGradeTexto() {
+  collectEdits();
+  _gradeTexto = !_gradeTexto;
+  renderEditModal();
+}
+
+function classeCelula(c) {
+  if (c === '%') return 'gr-repete';
+  if (REPETE_RE.test(c)) return 'gr-vezes';
+  return c === '' || CHORD_TOKEN_RE.test(c) ? '' : 'gr-invalida';
+}
+
+function renderGradeVisual() {
+  const el = document.getElementById('grade-visual');
+  if (!el) return;
+  editM.tabela = editM.tabela || [];
+  for (const s of editM.tabela) for (const row of s.grid = s.grid || []) while (row.length < 4) row.push('%');
+  el.innerHTML = editM.tabela.map((s, si) => {
+    const { nome, vezes } = separarVezes(s.nome_secao);
+    const opcoes = [...new Set([1, 2, 3, 4, 5, 6, 7, 8, vezes])].sort((a, b) => a - b);
+    return `
+      <div class="gr-secao">
+        <div class="gr-cab">
+          <input class="gr-nome" value="${escAttr(nome)}" placeholder="Nome da seção" aria-label="Nome da seção" oninput="gradeNome(${si}, this.value)">
+          <select class="gr-vezes-sel" aria-label="Repetições da seção" onchange="gradeVezes(${si}, this.value)">
+            ${opcoes.map(v => `<option value="${v}" ${v === vezes ? 'selected' : ''}>${v === 1 ? 'Sem repetir' : `Repetir ${v}×`}</option>`).join('')}
+          </select>
+          <button class="tb-btn" title="Subir seção" aria-label="Subir seção" ${si ? '' : 'disabled'} onclick="gradeMoverSecao(${si}, -1)">↑</button>
+          <button class="tb-btn" title="Descer seção" aria-label="Descer seção" ${si < editM.tabela.length - 1 ? '' : 'disabled'} onclick="gradeMoverSecao(${si}, 1)">↓</button>
+          <button class="tb-btn" title="Remover seção" aria-label="Remover seção" onclick="gradeRemoverSecao(${si})">🗑️</button>
+        </div>
+        ${s.grid.map((row, ri) => `
+          <div class="gr-linha">
+            <div class="gr-compassos">
+              ${row.map((c, ci) => `<div class="gr-cel ${classeCelula(c)}" tabindex="0" role="button" aria-label="Compasso ${ci + 1}: ${escAttr(c || 'vazio')}" data-s="${si}" data-r="${ri}" data-c="${ci}">${escHtml(c)}</div>`).join('')}
+            </div>
+            <button class="gr-tirar" title="Remover linha" aria-label="Remover linha" onclick="gradeRemoverLinha(${si}, ${ri})">×</button>
+          </div>`).join('')}
+        <button class="tb-btn gr-mais" onclick="gradeAdicionarLinha(${si})">+ Linha</button>
+      </div>`;
+  }).join('') + `<button class="tb-btn gr-mais" onclick="gradeAdicionarSecao()">+ Seção</button>`;
+}
+
+function gradeMudou() {
+  _editDirty = true;
+  renderGradeVisual();
+}
+
+function gradeNome(si, valor) {
+  editM.tabela[si].nome_secao = juntarVezes(valor, separarVezes(editM.tabela[si].nome_secao).vezes);
+}
+
+function gradeVezes(si, valor) {
+  editM.tabela[si].nome_secao = juntarVezes(separarVezes(editM.tabela[si].nome_secao).nome, Number(valor));
+  _editDirty = true;
+}
+
+function gradeMoverSecao(si, dir) {
+  fecharCelulaGrade();
+  const t = editM.tabela;
+  [t[si], t[si + dir]] = [t[si + dir], t[si]];
+  gradeMudou();
+}
+
+function gradeRemoverSecao(si) {
+  fecharCelulaGrade();
+  editM.tabela.splice(si, 1);
+  gradeMudou();
+}
+
+function gradeRemoverLinha(si, ri) {
+  fecharCelulaGrade();
+  editM.tabela[si].grid.splice(ri, 1);
+  gradeMudou();
+}
+
+function gradeAdicionarLinha(si) {
+  fecharCelulaGrade();
+  editM.tabela[si].grid.push(['%', '%', '%', '%']);
+  gradeMudou();
+}
+
+function gradeAdicionarSecao() {
+  fecharCelulaGrade();
+  editM.tabela.push({ nome_secao: 'Nova seção', grid: [['%', '%', '%', '%']] });
+  gradeMudou();
+  document.querySelector('#grade-visual .gr-secao:last-of-type .gr-nome')?.select();
+}
+
+let _celulaAberta = null;
+
+function fecharCelulaGrade(salvar = true) {
+  const a = _celulaAberta;
+  if (!a) return;
+  _celulaAberta = null;
+  if (salvar) {
+    let v = a.input.value.trim() || '%';
+    const rep = v.match(REPETE_RE);
+    if (rep) v = `x${rep[1] || rep[2]}`;
+    if (editM.tabela[a.s].grid[a.r][a.c] !== v) {
+      editM.tabela[a.s].grid[a.r][a.c] = v;
+      _editDirty = true;
+    }
+  }
+  renderGradeVisual();
+}
+
+function celulaGrade(s, r, c) {
+  return document.querySelector(`#grade-visual .gr-cel[data-s="${s}"][data-r="${r}"][data-c="${c}"]`);
+}
+
+function abrirCelulaGrade(s, r, c) {
+  fecharCelulaGrade();
+  const cel = celulaGrade(s, r, c);
+  if (!cel) return;
+  const valor = editM.tabela[s].grid[r][c];
+  cel.innerHTML = '<input class="gr-input" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="Acorde">';
+  const input = cel.firstChild;
+  input.value = valor === '%' ? '' : valor;
+  input.placeholder = '%';
+  _celulaAberta = { input, s, r, c };
+  input.focus();
+  input.select();
+  input.addEventListener('blur', () => { if (_celulaAberta?.input === input) fecharCelulaGrade(); });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.stopPropagation(); fecharCelulaGrade(false); celulaGrade(s, r, c)?.focus(); }
+    else if (e.key === 'Enter') { e.preventDefault(); fecharCelulaGrade(); celulaGrade(s, r, c)?.focus(); }
+    else if (e.key === 'Tab') {
+      e.preventDefault();
+      const celulas = [...document.querySelectorAll('#grade-visual .gr-cel')];
+      const prox = celulas[celulas.indexOf(input.closest('.gr-cel')) + (e.shiftKey ? -1 : 1)];
+      const d = prox && { ...prox.dataset };
+      fecharCelulaGrade();
+      if (d) abrirCelulaGrade(+d.s, +d.r, +d.c);
+    }
+  });
+}
+
+let _grPonteiro = null;
+
+function limparArrasteGrade() {
+  const p = _grPonteiro;
+  _grPonteiro = null;
+  if (!p) return;
+  clearTimeout(p.timer);
+  p.fantasma?.remove();
+  document.querySelector('#grade-visual .gr-arrastando')?.classList.remove('gr-arrastando');
+  document.querySelector('#grade-visual .gr-alvo')?.classList.remove('gr-alvo');
+}
+
+function iniciarArrasteGrade(p) {
+  const cel = celulaGrade(p.s, p.r, p.c);
+  if (!cel) return;
+  const f = document.createElement('div');
+  f.className = 'gr-fantasma';
+  f.textContent = cel.textContent;
+  document.body.appendChild(f);
+  f.style.left = `${p.x}px`;
+  f.style.top = `${p.y}px`;
+  p.fantasma = f;
+  cel.classList.add('gr-arrastando');
+}
+
+function alvoArrasteGrade(x, y) {
+  return document.elementFromPoint(x, y)?.closest?.('#grade-visual .gr-cel') || null;
+}
+
+function ligarGradeVisual() {
+  const el = document.getElementById('grade-visual');
+  if (!el) return;
+  renderGradeVisual();
+  el.addEventListener('pointerdown', e => {
+    const cel = e.target.closest('.gr-cel');
+    if (!cel || e.target.tagName === 'INPUT' || e.button) return;
+    fecharCelulaGrade();
+    const p = _grPonteiro = { s: +cel.dataset.s, r: +cel.dataset.r, c: +cel.dataset.c, x: e.clientX, y: e.clientY, id: e.pointerId, toque: e.pointerType !== 'mouse' };
+    if (p.toque) p.timer = setTimeout(() => { if (_grPonteiro === p) iniciarArrasteGrade(p); }, 250);
+  });
+  el.addEventListener('touchmove', e => { if (_grPonteiro?.fantasma) e.preventDefault(); }, { passive: false });
+  el.addEventListener('contextmenu', e => { if (e.target.closest('.gr-cel')) e.preventDefault(); });
+  el.addEventListener('keydown', e => {
+    const cel = e.target.closest('.gr-cel');
+    if (cel && e.target === cel && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      abrirCelulaGrade(+cel.dataset.s, +cel.dataset.r, +cel.dataset.c);
+    }
+  });
+}
+
+document.addEventListener('pointermove', e => {
+  const p = _grPonteiro;
+  if (!p || e.pointerId !== p.id) return;
+  const longe = Math.hypot(e.clientX - p.x, e.clientY - p.y) > 8;
+  if (!p.fantasma) {
+    if (!longe) return;
+    p.moveu = true;
+    // No toque, mexer antes de segurar é rolagem da tela
+    if (p.toque) { limparArrasteGrade(); return; }
+    iniciarArrasteGrade(p);
+  }
+  if (!p.fantasma) return;
+  e.preventDefault();
+  p.fantasma.style.left = `${e.clientX}px`;
+  p.fantasma.style.top = `${e.clientY}px`;
+  const alvo = alvoArrasteGrade(e.clientX, e.clientY);
+  document.querySelector('#grade-visual .gr-alvo')?.classList.remove('gr-alvo');
+  alvo?.classList.add('gr-alvo');
+});
+
+document.addEventListener('pointerup', e => {
+  const p = _grPonteiro;
+  if (!p || e.pointerId !== p.id) return;
+  const arrastando = !!p.fantasma;
+  const alvo = arrastando ? alvoArrasteGrade(e.clientX, e.clientY) : null;
+  limparArrasteGrade();
+  if (arrastando) {
+    if (!alvo) return;
+    const { s, r, c } = alvo.dataset;
+    const g = editM.tabela;
+    if (+s === p.s && +r === p.r && +c === p.c) return;
+    [g[s].grid[r][c], g[p.s].grid[p.r][p.c]] = [g[p.s].grid[p.r][p.c], g[s].grid[r][c]];
+    gradeMudou();
+  } else if (!p.moveu) {
+    abrirCelulaGrade(p.s, p.r, p.c);
+  }
+});
+
+document.addEventListener('pointercancel', limparArrasteGrade);
 
 function gerarGradeEditor() {
   collectEdits();

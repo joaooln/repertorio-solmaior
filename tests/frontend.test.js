@@ -70,6 +70,28 @@ test('grade não repete seção idêntica e numera as diferentes', () => {
   assert.deepStrictEqual(nomes, ['Verso', 'Refrão', 'Verso 2']);
 });
 
+test('grade: seção igual em seguida vira repetição', () => {
+  const v = (secao, acordes) => ({ secao, acordes, letra: 'x' });
+  const t = paraJS(ctx.gerarGradeDaCifra([v('Refrão', 'C G'), v('Refrão', 'C G'), v('Refrão', 'C G'), v('Ponte', 'D'), v('Refrão', 'C G')]));
+  assert.deepStrictEqual(t.map(s => s.nome_secao), ['Refrão x3', 'Ponte']);
+});
+
+test('grade: respeita marcações da cifra', () => {
+  const v = (secao, acordes) => ({ secao, acordes, letra: '' });
+  const t = paraJS(ctx.gerarGradeDaCifra([v('Solo x2', 'G D (2x)'), v('Fim', 'C | % | G')]));
+  assert.deepStrictEqual(t, [
+    { nome_secao: 'Solo x2', grid: [['G', 'D', 'x2', '%']] },
+    { nome_secao: 'Fim', grid: [['C', '%', 'G', '%']] },
+  ]);
+});
+
+test('repetição no nome da seção', () => {
+  assert.deepStrictEqual(paraJS(ctx.separarVezes('Refrão x2')), { nome: 'Refrão', vezes: 2 });
+  assert.deepStrictEqual(paraJS(ctx.separarVezes('Verso 2')), { nome: 'Verso 2', vezes: 1 });
+  assert.strictEqual(ctx.juntarVezes('Refrão', 1), 'Refrão');
+  assert.strictEqual(ctx.juntarVezes('Refrão', 3), 'Refrão x3');
+});
+
 test('transposição mantém a coluna de cada acorde', () => {
   const l = ctx.transporLinhaAlinhada('G       D7/F#   Am', 2);
   assert.deepStrictEqual(l.split(/\s+/), ['A', 'E7/G#', 'Bm']);

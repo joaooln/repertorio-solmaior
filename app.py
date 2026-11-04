@@ -972,7 +972,7 @@ LIXO_TITULO_RE = re.compile(
 def eh_linha_acordes(t):
     tokens = t.split()
     return bool(tokens) and all(
-        ACORDE_RE.match(tk) or tk in ('|', '%', '-') or re.match(r'^\(?x\d+\)?$', tk, re.I)
+        ACORDE_RE.match(tk) or tk in ('|', '%', '-') or re.match(r'^\(?(?:x\d+|\d+x)\)?$', tk, re.I)
         for tk in tokens
     )
 

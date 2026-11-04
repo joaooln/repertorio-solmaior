@@ -31,8 +31,8 @@ def test_transpoe_linha_nao_mexe_em_outro_texto():
 
 
 def test_transpoe_tabela_preserva_repeticao():
-    r = A.transpoe_tabela([{'nome_secao': 'Intro', 'grid': [['C', '%', 'G', '%']]}], 2)
-    assert r[0]['grid'] == [['D', '%', 'A', '%']]
+    r = A.transpoe_tabela([{'nome_secao': 'Intro x2', 'grid': [['C', '%', 'x2', '']]}], 2)
+    assert r[0]['grid'] == [['D', '%', 'x2', ''] ] and r[0]['nome_secao'] == 'Intro x2'
 
 
 def test_tom_apos_transposicao():
@@ -41,7 +41,7 @@ def test_tom_apos_transposicao():
 
 
 @pytest.mark.parametrize('linha', [
-    'G  Em  Bm  C  D', 'Bm7(5-)  E7  Am', 'C#º  G/D', 'D7(9)', 'Am7. D7', 'Bbo Am7', 'Dbdim7/C', 'A7M F#m7',
+    'G  Em  Bm  C  D', 'Bm7(5-)  E7  Am', 'C#º  G/D', 'D7(9)', 'Am7. D7', 'Bbo Am7', 'Dbdim7/C', 'A7M F#m7', 'G D (x2)', 'G D 2x',
 ])
 def test_reconhece_linha_de_acordes(linha):
     assert A.eh_linha_acordes(linha)

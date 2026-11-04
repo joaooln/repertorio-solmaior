@@ -170,3 +170,10 @@ def test_importar_pdf_devolve_sem_gravar(cliente):
 def test_importar_pdf_rejeita_outro_arquivo(cliente):
     r = cliente.post('/api/musicas/importar-pdf', json={'conteudo': base64.b64encode(b'nao e pdf').decode()}, headers=ADMIN)
     assert r.status_code == 400
+
+
+def test_pdf_com_repeticao_na_grade(cliente, criar):
+    mid = criar(tabela=[{'nome_secao': 'Refrão x2', 'grid': [['C', '%', 'x2', '']]}])
+    r = cliente.get(f'/api/musicas/{mid}/pdf?modo=tabela')
+    texto = ''.join(p.extract_text() for p in PdfReader(io.BytesIO(r.data)).pages)
+    assert 'REFRÃO X2' in texto and 'x2' in texto
