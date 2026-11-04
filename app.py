@@ -7,7 +7,8 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, render_template, send_file
 from werkzeug.exceptions import HTTPException
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 import requests
 from bs4 import BeautifulSoup
 
@@ -621,6 +622,13 @@ GEMINI_PREFERRED = [
 ]
 
 _gemini_models_cache = None  # descobertos uma vez por processo
+_gemini_client = None
+
+def get_gemini_client():
+    global _gemini_client
+    if _gemini_client is None:
+        _gemini_client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    return _gemini_client
 
 def get_gemini_models():
     global _gemini_models_cache
@@ -628,13 +636,13 @@ def get_gemini_models():
         try:
             available = {
                 m.name.replace('models/', '')
-                for m in genai.list_models()
-                if 'generateContent' in m.supported_generation_methods
+                for m in get_gemini_client().models.list()
+                if 'generateContent' in (m.supported_actions or [])
             }
             # mantém a ordem de preferência, filtrando pelos disponíveis
             _gemini_models_cache = [m for m in GEMINI_PREFERRED if m in available]
             if not _gemini_models_cache:
-                _gemini_models_cache = list(available)  # usa qualquer um
+                _gemini_models_cache = list(available) or GEMINI_PREFERRED  # usa qualquer um
             print(f"Modelos Gemini disponíveis (em ordem): {_gemini_models_cache}")
         except Exception as e:
             print(f"Erro ao listar modelos Gemini: {e}")
@@ -642,25 +650,29 @@ def get_gemini_models():
     return _gemini_models_cache
 
 def call_gemini(prompt, use_search=False):
-    """Tenta cada modelo disponível em ordem de preferência, com fallback em 429/404.
+    """Tenta cada modelo disponível em ordem de preferência, com fallback em 429/404 ou resposta vazia.
     Se use_search=True, tenta ativar Grounding com Google Search para buscar dados reais na web."""
-    models = get_gemini_models()
+    client = get_gemini_client()
+    busca = genai_types.GenerateContentConfig(tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())])
     last_err = None
-    for model_name in models:
+    for model_name in get_gemini_models():
         try:
             if use_search:
                 try:
-                    m = genai.GenerativeModel(model_name, tools='google_search_retrieval')
-                    response = m.generate_content(prompt)
-                    print(f"Modelo usado com Google Search: {model_name}")
-                    return response.text
+                    texto = client.models.generate_content(model=model_name, contents=prompt, config=busca).text
+                    if texto:
+                        print(f"Modelo usado com Google Search: {model_name}")
+                        return texto
                 except Exception as tool_err:
                     print(f"Aviso: Google Search não suportado por {model_name} ({tool_err}), tentando sem search...")
-            response = genai.GenerativeModel(model_name).generate_content(prompt)
-            print(f"Modelo usado: {model_name}")
-            return response.text
+            texto = client.models.generate_content(model=model_name, contents=prompt).text
+            if texto:
+                print(f"Modelo usado: {model_name}")
+                return texto
+            print(f"Modelo {model_name} devolveu resposta vazia, tentando próximo...")
+            last_err = ValueError('A IA devolveu uma resposta vazia. Tente novamente.')
         except Exception as e:
-            err_str = str(e)
+            err_str = str(e).lower()
             if any(x in err_str for x in ('429', '404', 'quota', 'exhausted', 'not found')):
                 print(f"Modelo {model_name} indisponível ({err_str[:80]}), tentando próximo...")
                 last_err = e
@@ -810,8 +822,6 @@ def importar_musica():
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return jsonify({'erro': 'Chave GEMINI_API_KEY não configurada'}), 400
-
-    genai.configure(api_key=api_key)
 
     is_yt = bool(re.search(r'(youtube\.com/(watch\?v=|shorts/)|youtu\.be/)', url.lower()))
     if is_yt:

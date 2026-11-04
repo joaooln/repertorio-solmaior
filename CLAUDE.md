@@ -21,13 +21,14 @@ Guia para Claude Code trabalhar neste repositório. O README é a documentação
 - **JSON em colunas TEXT:** `cifra_json`, `tabela_json`, `tags` são strings JSON serializadas. Sempre `json.dumps(..., ensure_ascii=False)` na escrita e `json.loads(...)` na leitura.
 - **Datas:** `now_iso()` (`datetime.utcnow().isoformat()`) é a única fonte de timestamps. Sempre UTC, sempre string ISO.
 - **Sem comentários óbvios.** O estilo do código é enxuto; siga o tom.
-- **Sem testes.** Não há suíte de testes; mudanças são verificadas rodando o app localmente (`python start.py`).
+- **Testes:** `tests/` roda sem Postgres (SQLite no lugar do banco, servidor local no lugar da API do Gemini) e o CI roda a cada push. Bug corrigido em cifra, transposição, importação ou backup ganha um teste. O SQLite é mais permissivo que o Postgres: SQL específico do Postgres continua precisando de verificação no banco real.
 
 ## Coisas que mordem
 
 - **PostgreSQL é obrigatório** mesmo em dev — não há fallback para SQLite. Sem `DATABASE_URL` o app quebra no boot (mas o `try/except` em `init_db()` no fim do arquivo só loga aviso).
+- **Python 3.12 em produção** (`.python-version`): o `google-genai` atual exige 3.11+.
 - **`sslmode='require'`** está hardcoded em `get_db()`. Se for usar Postgres local sem SSL, vai precisar ajustar.
-- **Modelos Gemini:** `GEMINI_PREFERRED` é uma lista ordenada por preferência (free tier primeiro). `call_gemini()` faz fallback automático em 429/404. Ao adicionar modelos novos, coloque na ordem certa.
+- **Modelos Gemini:** `GEMINI_PREFERRED` é uma lista ordenada por preferência (free tier primeiro). `call_gemini()` usa o pacote `google-genai` e faz fallback automático em 429/404 ou resposta vazia. Ao adicionar modelos novos, coloque na ordem certa.
 - **Toda gravação de música passa por `limpar_cifra`/`limpar_tabela`/`limpar_texto`** (NFC, sem caracteres invisíveis, acordes que vieram como letra voltam para `acordes`). Rota nova que grava cifra deve usar essas funções; `/api/biblioteca/limpar` reaplica em todo o banco.
 - **Transposição:** acontece tanto no backend (`/api/musicas/<id>/transpor`) quanto no frontend (modo apresentação). O regex em `transpoe_linha` cobre acordes complexos (`Cm7/G`, `F#sus4`, etc.) — mexer com cuidado.
 - **Service Worker:** ao mudar assets do shell, **incrementar `CACHE_NAME`** em `static/sw.js` (`solmaior-shell-vN`) ou os usuários ficam com a versão antiga em cache.
@@ -46,6 +47,14 @@ Guia para Claude Code trabalhar neste repositório. O README é a documentação
 | Mudar UI dinâmica | `static/app.js` — funções `render*` e `page(nome)` |
 | Mudar PDF | rotas `/api/repertorios/<id>/pdf` e `/api/musicas/<id>/pdf` em `app.py` (modos: `completo`, `cifra`, `tabela`, `setlist`) |
 | Mexer no modo apresentação/palco | `openApresentacao` e `openPalcoRep` em `static/app.js` (~linha 961+) |
+
+## Testes
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ -q
+node --test tests/frontend.test.js
+```
 
 ## Rodando localmente
 

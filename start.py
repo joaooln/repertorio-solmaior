@@ -5,7 +5,7 @@ Execute com: python start.py
 """
 import subprocess, sys, os, webbrowser, time
 
-DEPS = ["flask", "google-generativeai", "requests", "beautifulsoup4", "lxml", "reportlab", "psycopg2-binary"]
+DEPS = ["flask", "google-genai", "requests", "beautifulsoup4", "lxml", "reportlab", "psycopg2-binary", "pypdf", "qrcode[pil]"]
 
 def install():
     print("📦 Instalando dependências...")
@@ -14,7 +14,7 @@ def install():
 
 def check_deps():
     try:
-        import flask, google.generativeai, reportlab
+        import flask, google.genai, reportlab, pypdf, qrcode
         return True
     except ImportError:
         return False

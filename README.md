@@ -6,7 +6,7 @@ Sistema completo de gerenciamento de cifras e repertórios para cavaquinho — c
 
 ## Requisitos
 
-- **Python 3.8+** ([python.org](https://python.org))
+- **Python 3.11+** ([python.org](https://python.org))
 - **Chave da API Gemini** para importar cifras via link ([aistudio.google.com](https://aistudio.google.com/app/apikey))
 - **Banco de dados PostgreSQL** (ex: [Supabase](https://supabase.com))
 
