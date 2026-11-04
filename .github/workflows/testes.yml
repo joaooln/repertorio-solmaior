@@ -15,4 +15,4 @@ jobs:
           node-version: 22
       - run: pip install -r requirements-dev.txt
       - run: pytest tests/ -q
-      - run: node --test tests/
+      - run: node --test tests/frontend.test.js

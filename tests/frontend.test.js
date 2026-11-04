@@ -1,4 +1,4 @@
-// Carrega static/app.js com um navegador de mentira e testa as funções puras. Rode: node --test tests/
+// Carrega static/app.js com um navegador de mentira e testa as funções puras. Rode: node --test tests/frontend.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
