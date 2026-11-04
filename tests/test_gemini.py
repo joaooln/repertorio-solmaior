@@ -88,7 +88,7 @@ def test_busca_recusada_tenta_sem_busca_no_mesmo_modelo(api):
     assert 'tools' in api.pedidos[0][1] and 'tools' not in api.pedidos[1][1]
 
 
-@pytest.mark.parametrize('status', [429, 404])
+@pytest.mark.parametrize('status', [429, 503, 404])
 def test_troca_de_modelo_sem_cota_ou_inexistente(api, status):
     api.respostas['gemini-2.5-flash'] = (status, 'limite')
     api.respostas['gemini-2.0-flash'] = (200, 'do segundo')
@@ -124,6 +124,16 @@ def test_importar_por_link_usa_o_gemini(api, cliente, monkeypatch):
     }) + '\n```')
     r = cliente.post('/api/musicas/importar', json={'url': 'https://exemplo.com/bate'}, headers=ADMIN).get_json()
     assert r['ok'] and cliente.get(f"/api/musicas/{r['id']}").get_json()['cifra_tradicional'][0]['acordes'] == 'G  D'
+
+
+def test_importar_com_todos_os_modelos_sobrecarregados(api, cliente, monkeypatch):
+    from conftest import ADMIN
+    monkeypatch.setattr(A, 'get_web_content', lambda url: 'conteúdo da página')
+    api.respostas['gemini-2.5-flash'] = (503, 'high demand')
+    api.respostas['gemini-2.0-flash'] = (503, 'high demand')
+    r = cliente.post('/api/musicas/importar', json={'url': 'https://exemplo.com/x'}, headers=ADMIN)
+    assert r.status_code == 503 and 'sobrecarregados' in r.get_json()['erro']
+    assert 'UNAVAILABLE' not in r.get_json()['erro'] and len(api.pedidos) == 2
 
 
 def test_importar_sem_chave(cliente, monkeypatch):

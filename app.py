@@ -621,6 +621,9 @@ GEMINI_PREFERRED = [
     'gemini-1.5-flash', 'gemini-1.5-flash-8b',
 ]
 
+# Erros em que vale tentar outro modelo: sem cota, sobrecarregado ou inexistente
+GEMINI_INDISPONIVEL = ('429', '503', '404', 'quota', 'exhausted', 'unavailable', 'not found')
+
 _gemini_models_cache = None  # descobertos uma vez por processo
 _gemini_client = None
 
@@ -650,7 +653,7 @@ def get_gemini_models():
     return _gemini_models_cache
 
 def call_gemini(prompt, use_search=False):
-    """Tenta cada modelo disponível em ordem de preferência, com fallback em 429/404 ou resposta vazia.
+    """Tenta cada modelo disponível em ordem de preferência, com fallback em 429/503/404 ou resposta vazia.
     Se use_search=True, tenta ativar Grounding com Google Search para buscar dados reais na web."""
     client = get_gemini_client()
     busca = genai_types.GenerateContentConfig(tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())])
@@ -673,7 +676,7 @@ def call_gemini(prompt, use_search=False):
             last_err = ValueError('A IA devolveu uma resposta vazia. Tente novamente.')
         except Exception as e:
             err_str = str(e).lower()
-            if any(x in err_str for x in ('429', '404', 'quota', 'exhausted', 'not found')):
+            if any(x in err_str for x in GEMINI_INDISPONIVEL):
                 print(f"Modelo {model_name} indisponível ({err_str[:80]}), tentando próximo...")
                 last_err = e
                 continue
@@ -945,6 +948,8 @@ REGRAS IMPORTANTES:
         return jsonify({'ok': True, 'id': mid, 'titulo': titulo})
     except Exception as e:
         print(f"Erro na importação: {e}")
+        if any(x in str(e).lower() for x in GEMINI_INDISPONIVEL):
+            return jsonify({'erro': 'Os modelos de IA estão sobrecarregados ou sem cota agora. Aguarde um pouco e tente de novo.'}), 503
         return jsonify({'erro': str(e)}), 500
 
 # ─── Importar PDF (Moises.ai) ─────────────────────────────────────────────────
