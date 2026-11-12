@@ -8,8 +8,8 @@ Guia para Claude Code trabalhar neste repositório. O README é a documentação
 
 ## Arquitetura em 30 segundos
 
-- **Backend:** um único arquivo `app.py` (Flask) com todas as rotas, helpers de transposição, importação via Gemini, geração de PDF (ReportLab) e QR code. ~940 linhas.
-- **Frontend:** `static/app.js` (vanilla JS, ~66 KB) renderiza tudo dinamicamente no `<div id="app-main">`. Sem build step, sem framework, sem bundler.
+- **Backend:** um único arquivo `app.py` (Flask) com todas as rotas, helpers de transposição, importação via Gemini, geração de PDF (ReportLab), backups e QR code. ~1.700 linhas.
+- **Frontend:** `static/app.js` (vanilla JS, ~3.200 linhas) renderiza tudo dinamicamente no `<div id="app-main">`. Sem build step, sem framework, sem bundler.
 - **Camada offline:** `static/idb.js` é o wrapper IndexedDB; `static/sw.js` é o Service Worker (cache-first para shell, passa direto para `/api/*`).
 - **Banco:** PostgreSQL (Supabase). Tabelas: `musicas`, `repertorios`, `repertorio_musicas` e `backups` (cópias JSON completas da biblioteca, as 15 mais recentes; a diária é criada pelo cron em `/health`). Migrações via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` dentro de `init_db()`.
 - **IDs:** `gen_id()` retorna os 8 primeiros chars de um UUID4 — IDs curtos em todo lugar (musicas, repertorios).
@@ -19,7 +19,7 @@ Guia para Claude Code trabalhar neste repositório. O README é a documentação
 
 - **Idioma:** identificadores, rotas e mensagens em **português** (`musicas`, `repertorios`, `transpor`, `criar_musica`, `cifra_tradicional`, `tom_original`). Mantenha o padrão ao adicionar código.
 - **JSON em colunas TEXT:** `cifra_json`, `tabela_json`, `tags` são strings JSON serializadas. Sempre `json.dumps(..., ensure_ascii=False)` na escrita e `json.loads(...)` na leitura.
-- **Datas:** `now_iso()` (`datetime.utcnow().isoformat()`) é a única fonte de timestamps. Sempre UTC, sempre string ISO.
+- **Datas:** `now_iso()` (UTC sem fuso, via `agora_utc()`) é a única fonte de timestamps. Sempre UTC, sempre string ISO.
 - **Sem comentários óbvios.** O estilo do código é enxuto; siga o tom.
 - **Testes:** `tests/` roda sem Postgres (SQLite no lugar do banco, servidor local no lugar da API do Gemini) e o CI roda a cada push. Bug corrigido em cifra, transposição, importação ou backup ganha um teste. O SQLite é mais permissivo que o Postgres: SQL específico do Postgres continua precisando de verificação no banco real.
 
@@ -33,7 +33,9 @@ Guia para Claude Code trabalhar neste repositório. O README é a documentação
 - **Transposição:** acontece tanto no backend (`/api/musicas/<id>/transpor`) quanto no frontend (modo apresentação). O regex em `transpoe_linha` cobre acordes complexos (`Cm7/G`, `F#sus4`, etc.) — mexer com cuidado.
 - **Service Worker:** ao mudar assets do shell, **incrementar `CACHE_NAME`** em `static/sw.js` (`solmaior-shell-vN`) ou os usuários ficam com a versão antiga em cache.
 - **Service Worker NÃO cacheia `/api/*`** — quem cuida do offline para API é o `idb.js` no app.
-- **Handler global de exceção** em `app.py` (`handle_exception`) devolve `{"erro": ..., "tipo": ...}` JSON com status 500 — útil para debug no Vercel, mas significa que qualquer exception virou JSON, não 500 HTML.
+- **Handler global de exceção** em `app.py` (`handle_exception`) devolve JSON: `erro` é a mensagem amigável que a tela mostra, `detalhe` e o log do Vercel trazem o erro técnico. Não devolva `str(e)` em `erro`.
+- **Conexão com o banco é reaproveitada** por thread em `get_db()` (abrir uma nova custa ~1s). Ela faz `rollback` ao sair: toda escrita precisa de `conn.commit()` explícito.
+- **Texto do usuário na tela (`static/app.js`):** sempre `escHtml`/`escAttr`, e `jsArg()` quando vai como argumento dentro de `onclick="..."`. Estado de edição fica em variáveis (`editRep`, `editM`), nunca lido de volta do DOM — foi assim que repertórios foram gravados vazios.
 - **`init_db()` roda no import** do `app.py` (final do arquivo). É necessário porque o Vercel não chama `start.py`. Em dev, `start.py` também chama.
 - **Importação em lote** vem do frontend — o backend tem só `/api/musicas/importar` (uma URL por vez). O loop é JS.
 
@@ -46,7 +48,7 @@ Guia para Claude Code trabalhar neste repositório. O README é a documentação
 | Mudar layout/estilo | `static/style.css` e/ou `templates/index.html` (shell estático mínimo) |
 | Mudar UI dinâmica | `static/app.js` — funções `render*` e `page(nome)` |
 | Mudar PDF | rotas `/api/repertorios/<id>/pdf` e `/api/musicas/<id>/pdf` em `app.py` (modos: `completo`, `cifra`, `tabela`, `setlist`) |
-| Mexer no modo apresentação/palco | `openApresentacao` e `openPalcoRep` em `static/app.js` (~linha 961+) |
+| Mexer no modo apresentação/palco | `openApresentacao` e `openPalcoRep` em `static/app.js` |
 
 ## Testes
 

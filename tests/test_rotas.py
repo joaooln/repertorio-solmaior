@@ -177,3 +177,38 @@ def test_pdf_com_repeticao_na_grade(cliente, criar):
     r = cliente.get(f'/api/musicas/{mid}/pdf?modo=tabela')
     texto = ''.join(p.extract_text() for p in PdfReader(io.BytesIO(r.data)).pages)
     assert 'REFRÃO X2' in texto and 'x2' in texto
+
+
+def test_repertorio_guarda_copia_antes_de_perder_varias_musicas(cliente, criar):
+    a, b, c = criar('A'), criar('B'), criar('C')
+    rid = repertorio(cliente, musicas=[a, b, c])
+    cliente.put(f'/api/repertorios/{rid}', json={'musicas': [a, b]}, headers=ADMIN)
+    assert cliente.get('/api/backups').get_json() == []
+
+    cliente.put(f'/api/repertorios/{rid}', json={'musicas': []}, headers=ADMIN)
+    copias = cliente.get('/api/backups').get_json()
+    assert [x['motivo'] for x in copias] == ['antes de reduzir repertório']
+    r = cliente.post(f"/api/backups/{copias[0]['id']}/restaurar", json={}, headers=ADMIN).get_json()
+    assert r['repertorios_restaurados'] == 1 and musicas_do_rep(cliente, rid) == [a, b]
+
+
+def test_repertorio_ignora_musica_inexistente_e_repetida(cliente, criar):
+    a, b = criar('A'), criar('B')
+    rid = repertorio(cliente)
+    r = cliente.put(f'/api/repertorios/{rid}', json={'musicas': [b, 'naoexiste', a, b]}, headers=ADMIN)
+    assert r.status_code == 200 and musicas_do_rep(cliente, rid) == [b, a]
+    assert cliente.put(f'/api/repertorios/{rid}', json={'musicas': 'x'}, headers=ADMIN).status_code == 400
+    assert musicas_do_rep(cliente, rid) == [b, a]
+
+
+def test_erro_interno_nao_vaza_detalhe_na_mensagem(cliente, monkeypatch):
+    import app as A
+
+    def quebra(*a, **k):
+        raise RuntimeError('segredo interno xyz')
+
+    monkeypatch.setattr(A, 'montar_backup', quebra)
+    r = cliente.get('/api/biblioteca/export')
+    corpo = r.get_json()
+    assert r.status_code == 500 and 'xyz' not in corpo['erro'] and 'xyz' in corpo['detalhe']
+    assert cliente.get('/rota/que/nao/existe').status_code == 404

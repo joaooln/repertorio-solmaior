@@ -5,5 +5,5 @@ __pycache__/
 venv/
 .vercel
 node_modules/
-{templates,static/
+Modelo novo/
 .pytest_cache/

@@ -112,3 +112,44 @@ test('duplicadas: ignora acento, caixa e parênteses e põe a mais completa prim
   ]));
   assert.deepStrictEqual(grupos.map(g => g.map(m => m.id)), [['b', 'a']]);
 });
+
+test('texto do usuário não quebra HTML nem onclick', () => {
+  const ruim = `D'Água <b> & "aspas"`;
+  assert.strictEqual(ctx.escHtml('<b>&'), '&lt;b&gt;&amp;');
+  const arg = ctx.jsArg(ruim);
+  assert.ok(!/["<>]/.test(arg), arg);
+  // O navegador desfaz as entidades do atributo antes de rodar o JS
+  const js = arg.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  assert.strictEqual(JSON.parse(js), ruim);
+});
+
+test('editor de repertório lê a lista da memória, não da tela', () => {
+  vm.runInContext("editRep = { id: 'r1', musicas: [{ id: 'a' }, { id: 'b' }] }", ctx);
+  assert.deepStrictEqual(paraJS(ctx.getSelectedIds()), ['a', 'b']);
+  vm.runInContext('editRep = null', ctx);
+  assert.deepStrictEqual(paraJS(ctx.getSelectedIds()), []);
+});
+
+test('remover do repertório nunca grava lista vazia por engano', async () => {
+  const puts = [];
+  vm.runInContext("editRep = { id: 'r1', musicas: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] }", ctx);
+  ctx.__puts = puts;
+  vm.runInContext(`api.put = async (url, d) => { __puts.push(JSON.parse(JSON.stringify(d))); return { ok: true }; };
+    api.get = async () => [{ id: 'r1', musicas: [{ id: 'a' }, { id: 'c' }] }];
+    refreshEditRepLists = async () => {};`, ctx);
+  await ctx.removerDaLista('b');
+  await ctx.removerDaLista('nao-esta-na-lista');
+  assert.deepStrictEqual(puts, [{ musicas: ['a', 'c'] }]);
+  assert.deepStrictEqual(paraJS(ctx.getSelectedIds()), ['a', 'c']);
+});
+
+test('fila offline soma alterações do mesmo item em vez de trocar', async () => {
+  const fila = [];
+  ctx.idbGetAll = async () => fila.slice();
+  ctx.idbDelete = async (_, qid) => { fila.splice(fila.findIndex(i => i.qid === qid), 1); };
+  ctx.idbAdd = async (_, item) => { fila.push({ ...item, qid: fila.length + 1 }); };
+  await ctx.enqueueWrite('PUT', '/api/repertorios/r1', { musicas: ['a', 'b'] });
+  await ctx.enqueueWrite('PUT', '/api/repertorios/r1', { nome: 'Show' });
+  await ctx.enqueueWrite('PUT', '/api/repertorios/r2', { nome: 'Outro' });
+  assert.deepStrictEqual(paraJS(fila.map(i => i.body)), [{ musicas: ['a', 'b'], nome: 'Show' }, { nome: 'Outro' }]);
+});

@@ -1,10 +1,10 @@
 """
 Repertório Sol Maior — Backend Flask + SQLite
 """
-import os, json, re, subprocess, sys, psycopg2, io, unicodedata, base64
+import os, json, re, subprocess, sys, psycopg2, io, unicodedata, base64, threading, time, traceback
 from contextlib import contextmanager
 from psycopg2.extras import RealDictCursor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from flask import Flask, request, jsonify, render_template, send_file
 from werkzeug.exceptions import HTTPException
 from google import genai
@@ -30,14 +30,46 @@ def admin_required(f):
 
 
 # ─── Banco de dados ────────────────────────────────────────────────────────────
+_db_local = threading.local()
+DB_OCIOSA_S = 20  # depois disso a conexão é testada antes de ser reaproveitada
+
+def conectar_db():
+    # Supabase/PostgreSQL na nuvem geralmente exige SSL
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, sslmode='require')
+
+def descartar_db():
+    conn, _db_local.conn = getattr(_db_local, 'conn', None), None
+    try:
+        if conn is not None: conn.close()
+    except Exception:
+        pass
+
 @contextmanager
 def get_db():
-    # Supabase/PostgreSQL na nuvem geralmente exige SSL
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, sslmode='require')
+    # Abrir conexão custa ~1s; cada thread reaproveita a sua entre os pedidos
+    conn = getattr(_db_local, 'conn', None)
+    if conn is not None and (conn.closed or time.monotonic() - _db_local.usada > DB_OCIOSA_S):
+        try:
+            if conn.closed: raise psycopg2.InterfaceError('fechada')
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            conn.rollback()
+        except Exception:
+            descartar_db()
+            conn = None
+    if conn is None:
+        conn = _db_local.conn = conectar_db()
     try:
         yield conn
-    finally:
-        conn.close()
+    except BaseException:
+        descartar_db()
+        raise
+    else:
+        try:
+            conn.rollback()  # sem efeito depois de commit; não deixa transação aberta
+            _db_local.usada = time.monotonic()
+        except Exception:
+            descartar_db()
 
 def init_db():
     with get_db() as conn:
@@ -95,8 +127,11 @@ def gen_id():
     import uuid
     return str(uuid.uuid4())[:8]
 
+def agora_utc():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 def now_iso():
-    return datetime.utcnow().isoformat()
+    return agora_utc().isoformat()
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
 def remove_acentos(texto):
@@ -401,8 +436,14 @@ def handle_exception(e):
     # Deixa 404, 405, etc. passarem com seu status correto
     if isinstance(e, HTTPException):
         return jsonify({"erro": e.description, "tipo": e.name}), e.code
-    # Retorna o erro em JSON para facilitar o debug no Vercel
-    return jsonify({"erro": str(e), "tipo": type(e).__name__}), 500
+    # O detalhe técnico fica no log do Vercel e em "detalhe"; a tela mostra só "erro"
+    traceback.print_exc()
+    detalhe = f"{type(e).__name__}: {e}"[:300]
+    if isinstance(e, (psycopg2.OperationalError, psycopg2.InterfaceError)):
+        return jsonify({"erro": "Não foi possível falar com o banco de dados agora. Tente de novo em instantes.",
+                        "tipo": type(e).__name__, "detalhe": detalhe}), 503
+    return jsonify({"erro": "Algo deu errado no servidor. Tente de novo; se continuar, avise com o horário do erro.",
+                    "tipo": type(e).__name__, "detalhe": detalhe}), 500
 
 @app.route('/favicon.ico')
 def favicon():
@@ -950,7 +991,7 @@ REGRAS IMPORTANTES:
         print(f"Erro na importação: {e}")
         if any(x in str(e).lower() for x in GEMINI_INDISPONIVEL):
             return jsonify({'erro': 'Os modelos de IA estão sobrecarregados ou sem cota agora. Aguarde um pouco e tente de novo.'}), 503
-        return jsonify({'erro': str(e)}), 500
+        raise
 
 # ─── Importar PDF (Moises.ai) ─────────────────────────────────────────────────
 ACORDE_RE = re.compile(
@@ -1107,10 +1148,21 @@ def atualizar_repertorio(rid):
         with conn.cursor() as cur:
             if 'nome' in d:
                 cur.execute("UPDATE repertorios SET nome=%s, atualizado_em=%s WHERE id=%s",
-                             (d['nome'], now_iso(), rid))
+                             (limpar_texto(d['nome']).strip(), now_iso(), rid))
             if 'musicas' in d:
+                if not isinstance(d['musicas'], list):
+                    return jsonify({'erro': 'Lista de músicas inválida'}), 400
+                cur.execute("SELECT musica_id FROM repertorio_musicas WHERE repertorio_id=%s", (rid,))
+                atuais = {r['musica_id'] for r in cur.fetchall()}
+                cur.execute("SELECT id FROM musicas")
+                existentes = {r['id'] for r in cur.fetchall()}
+                novas = [m for m in dict.fromkeys(d['musicas']) if m in existentes]
+                # Pela tela sai uma música por vez; perder várias de uma vez só ganha uma cópia antes
+                if len(atuais - set(novas)) >= 2:
+                    salvar_backup(cur, 'antes de reduzir repertório')
                 cur.execute("DELETE FROM repertorio_musicas WHERE repertorio_id=%s", (rid,))
-                for i, mid in enumerate(d['musicas']):
+                cur.execute("UPDATE repertorios SET atualizado_em=%s WHERE id=%s", (now_iso(), rid))
+                for i, mid in enumerate(novas):
                     cur.execute(
                         """INSERT INTO repertorio_musicas (repertorio_id, musica_id, posicao)
                            VALUES (%s,%s,%s)
@@ -1623,7 +1675,7 @@ def health():
                 # O cron diário do Vercel chama esta rota: aproveita para guardar o backup do dia
                 cur.execute("SELECT MAX(criado_em) AS ultimo FROM backups WHERE motivo='diário'")
                 ultimo = cur.fetchone()['ultimo']
-                if not ultimo or ultimo < (datetime.utcnow() - timedelta(hours=20)).isoformat():
+                if not ultimo or ultimo < (agora_utc() - timedelta(hours=20)).isoformat():
                     salvar_backup(cur, 'diário')
             conn.commit()
         return jsonify({"status": "ok"}), 200

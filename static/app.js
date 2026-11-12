@@ -9,6 +9,10 @@ function escHtml(s) {
 function escAttr(s) {
   return escHtml(s).replace(/"/g, '&quot;');
 }
+// Texto do usuário como argumento de função dentro de onclick="..."
+function jsArg(s) {
+  return escAttr(JSON.stringify(String(s ?? '')));
+}
 
 const CHORD_TOKEN_RE = /^[A-G][#b]?(?:maj|min|dim|aug|sus|add|m|M|º|°|\+|(?<=[#b])o)?(?:[0-9]{1,2}|M|[#b+-][0-9]{1,2}|sus[0-9]?|add[0-9]{1,2}|dim|\([^)]*\))*(?:\/[A-G][#b]?)?\.?$/;
 
@@ -62,7 +66,7 @@ async function syncPendingWrites() {
     if (!items.length) return;
 
     toast(`🔄 Sincronizando ${items.length} alteração${items.length!==1?'ões':''}...`, 'warn');
-    let ok = 0, fail = 0;
+    let ok = 0, fail = 0, descartadas = 0, primeiroErro = '';
 
   for (const item of items) {
     try {
@@ -84,20 +88,28 @@ async function syncPendingWrites() {
           r = await fetch(item.url, opts);
         }
       }
+      if (r.status === 404 && item.method !== 'POST') {
+        // O item foi apagado no servidor: a alteração nunca vai poder ser aplicada
+        await idbDelete('pending', item.qid);
+        descartadas++;
+        continue;
+      }
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       await idbDelete('pending', item.qid);
       ok++;
     } catch (e) {
       console.warn('Sync falhou para', item.url, e);
+      if (!primeiroErro) primeiroErro = `${descreverPendente(item)}: ${e.message}`;
       fail++;
     }
   }
 
   await refreshPendingBadge();
+  const extra = descartadas ? ` · ${descartadas} ignorada${descartadas!==1?'s':''} (item já apagado)` : '';
   if (fail === 0) {
-    toast(`✅ ${ok} alteração${ok!==1?'ões':''} sincronizada${ok!==1?'s':''}!`);
+    toast(`✅ ${ok} alteração${ok!==1?'ões':''} sincronizada${ok!==1?'s':''}!${extra}`);
   } else {
-    toast(`⚠️ ${ok} sincronizadas, ${fail} com erro`, 'warn');
+    toast(`⚠️ ${ok} sincronizadas, ${fail} com erro — ${primeiroErro}. Continuam na fila.${extra}`, 'warn');
   }
 
   // Atualiza a página com dados frescos do servidor
@@ -108,13 +120,21 @@ async function syncPendingWrites() {
   }
 }
 
+function descreverPendente(item) {
+  const acao = { POST: 'criar', PUT: 'alterar', DELETE: 'apagar' }[item.method] || item.method;
+  const alvo = item.url.includes('/repertorios') ? 'repertório' : 'música';
+  const nome = item.body?.titulo || item.body?.nome;
+  return `${acao} ${alvo}${nome ? ` “${nome}”` : ''}`;
+}
+
 // Enfileira uma escrita para sync posterior
 async function enqueueWrite(method, url, body) {
-  // Coalesce: se já existe um PUT pendente para a mesma URL, substitui
+  // Coalesce: PUT pendente para a mesma URL é somado ao novo (campos novos vencem, os outros ficam)
   if (method === 'PUT') {
     const all = await idbGetAll('pending');
     const dup = all.find(i => i.method === 'PUT' && i.url === url);
     if (dup) {
+      body = { ...dup.body, ...body };
       await idbDelete('pending', dup.qid);
     }
   }
@@ -565,7 +585,7 @@ async function renderMusicas() {
         ${allTags.length ? `<span style="width:1px;height:16px;background:var(--line);margin:0 4px;display:inline-block"></span>` : ''}
         ${allTags.map(t => {
           const n = counts.filter(m=>(m.tags||[]).includes(t)).length;
-          return `<button class="chip ${mTagFilter===t?'on':''}" onclick="mTagFilter=mTagFilter==='${t}'?'':'${t}';mFavOnly=false;renderMusicas()">${t} <span class="chip-count">${n}</span></button>`;
+          return `<button class="chip ${mTagFilter===t?'on':''}" onclick="mTagFilter=mTagFilter===${jsArg(t)}?'':${jsArg(t)};mFavOnly=false;renderMusicas()">${escHtml(t)} <span class="chip-count">${n}</span></button>`;
         }).join('')}
       `;
     }
@@ -587,13 +607,13 @@ async function renderMusicas() {
               ${m.favorito ? '★' : '☆'}
             </button>
             <div>
-              <div class="song-title">${m.titulo}</div>
-              <div class="song-artist">${m.artista}</div>
+              <div class="song-title">${escHtml(m.titulo)}</div>
+              <div class="song-artist">${escHtml(m.artista)}</div>
             </div>
             <div class="song-tags">
-              ${(m.tags||[]).map(t=>`<span class="song-tag">${t}</span>`).join('')}
+              ${(m.tags||[]).map(t=>`<span class="song-tag">${escHtml(t)}</span>`).join('')}
             </div>
-            <div class="song-tom">${m.tom}</div>
+            <div class="song-tom">${escHtml(m.tom)}</div>
             <div class="song-meta">
               ${m.bpm ? `<span class="bpm">${m.bpm} bpm</span>` : ''}
               ${m.duracao_min ? `<span class="dur">${m.duracao_min}min</span>` : ''}
@@ -656,7 +676,7 @@ async function renderMusicas() {
         ${allTags.length ? `<span style="width:1px;height:16px;background:var(--line);margin:0 4px;display:inline-block"></span>` : ''}
         ${allTags.map(t => {
           const n = counts.filter(m=>(m.tags||[]).includes(t)).length;
-          return `<button class="chip ${mTagFilter===t?'on':''}" onclick="mTagFilter=mTagFilter==='${t}'?'':'${t}';mFavOnly=false;renderMusicas()">${t} <span class="chip-count">${n}</span></button>`;
+          return `<button class="chip ${mTagFilter===t?'on':''}" onclick="mTagFilter=mTagFilter===${jsArg(t)}?'':${jsArg(t)};mFavOnly=false;renderMusicas()">${escHtml(t)} <span class="chip-count">${n}</span></button>`;
         }).join('')}
       </div>
 
@@ -675,13 +695,13 @@ async function renderMusicas() {
               ${m.favorito ? '★' : '☆'}
             </button>
             <div>
-              <div class="song-title">${m.titulo}</div>
-              <div class="song-artist">${m.artista}</div>
+              <div class="song-title">${escHtml(m.titulo)}</div>
+              <div class="song-artist">${escHtml(m.artista)}</div>
             </div>
             <div class="song-tags">
-              ${(m.tags||[]).map(t=>`<span class="song-tag">${t}</span>`).join('')}
+              ${(m.tags||[]).map(t=>`<span class="song-tag">${escHtml(t)}</span>`).join('')}
             </div>
-            <div class="song-tom">${m.tom}</div>
+            <div class="song-tom">${escHtml(m.tom)}</div>
             <div class="song-meta">
               ${m.bpm ? `<span class="bpm">${m.bpm} bpm</span>` : ''}
               ${m.duracao_min ? `<span class="dur">${m.duracao_min}min</span>` : ''}
@@ -829,7 +849,7 @@ async function doImport(substituir = false) {
       msg.innerHTML = `
         <div style="background:rgba(212,168,83,.1);border:1px solid rgba(212,168,83,.3);border-radius:8px;padding:10px 14px;font-size:13px;">
           <strong style="color:var(--accent)">⚠️ Música já existe na biblioteca:</strong><br>
-          <span style="color:var(--text)">"${r.titulo}" — ${r.artista}</span><br>
+          <span style="color:var(--text)">"${escHtml(r.titulo)}" — ${escHtml(r.artista)}</span><br>
           <div style="margin-top:8px;display:flex;gap:8px;">
             <button class="btn btn-ghost btn-sm" onclick="closeModal()">Cancelar</button>
             <button class="btn btn-primary btn-sm" onclick="doImport(true)">Substituir</button>
@@ -1247,7 +1267,7 @@ function renderEditModal() {
       <div class="form-group">
         <label>Estilos / Tags</label>
         <div class="tags-editor" id="tags-editor">
-          ${(m.tags||[]).map(t=>`<span class="tag-chip">${t}<button onclick="removeTag('${t.replace(/'/g,"\\'")}')">×</button></span>`).join('')}
+          ${(m.tags||[]).map(t=>`<span class="tag-chip">${escHtml(t)}<button onclick="removeTag(${jsArg(t)})">×</button></span>`).join('')}
           <input id="tag-input" placeholder="Adicionar estilo..." onkeydown="if(event.key==='Enter'||event.key===','){event.preventDefault();addTag()}" style="border:none;background:transparent;outline:none;flex:1;min-width:100px;color:var(--text);font-size:13px;">
         </div>
         <div class="tag-suggestions" id="tag-suggestions">
@@ -1323,8 +1343,8 @@ function renderEditModal() {
         <span style="flex:1"></span>
         <button class="btn btn-primary" onclick="doSave()">💾 ${_filaImport.length ? 'Salvar e próxima →' : 'Salvar na biblioteca'}</button>
       ` : `
-        <button class="btn btn-danger btn-sm" onclick="delMusica('${m.id}','${m.titulo.replace(/'/g,"\\'")}',true)">🗑️ Excluir</button>
-        <button class="btn btn-ghost btn-sm" onclick="openPDFMusica('${m.id}','${m.titulo.replace(/'/g,"\\'")}')">📄 PDF</button>
+        <button class="btn btn-danger btn-sm" onclick="delMusica('${m.id}',${jsArg(m.titulo)},true)">🗑️ Excluir</button>
+        <button class="btn btn-ghost btn-sm" onclick="openPDFMusica('${m.id}',${jsArg(m.titulo)})">📄 PDF</button>
         <button class="btn btn-ghost" onclick="requestCloseModal()">Fechar</button>
         <button class="btn btn-primary" onclick="doSave()">💾 Salvar</button>
       `}
@@ -1678,7 +1698,7 @@ function removeTag(t) {
 function renderTagsEditor() {
   const ed = document.getElementById('tags-editor');
   if(!ed) return;
-  const chips = (editM.tags||[]).map(t=>`<span class="tag-chip">${t}<button onclick="removeTag('${t.replace(/'/g,"\\'")}')">×</button></span>`).join('');
+  const chips = (editM.tags||[]).map(t=>`<span class="tag-chip">${escHtml(t)}<button onclick="removeTag(${jsArg(t)})">×</button></span>`).join('');
   const input = `<input id="tag-input" placeholder="Adicionar estilo..." onkeydown="if(event.key==='Enter'||event.key===','){event.preventDefault();addTag()}" style="border:none;background:transparent;outline:none;flex:1;min-width:100px;color:var(--text);font-size:13px;">`;
   ed.innerHTML = chips + input;
 }
@@ -1853,7 +1873,7 @@ function parseTabela(text) {
 }
 
 async function delMusica(id, titulo, fromModal=false) {
-  confirm_del(`Deseja excluir permanentemente a música "<strong>${titulo}</strong>"?<br><br>Ela também será removida de qualquer Repertório onde esteja contida.`, async()=>{
+  confirm_del(`Deseja excluir permanentemente a música "<strong>${escHtml(titulo)}</strong>"?<br><br>Ela também será removida de qualquer Repertório onde esteja contida.`, async()=>{
     await api.del(`/api/musicas/${id}`);
     toast('🗑️ Música removida da biblioteca');
     if(fromModal) closeModal();
@@ -1865,19 +1885,19 @@ async function delMusica(id, titulo, fromModal=false) {
 function openPDFMusica(id, titulo) {
   modal(`
     <div class="modal-header">
-      <h3 class="modal-title">📄 PDF — ${titulo}</h3>
+      <h3 class="modal-title">📄 PDF — ${escHtml(titulo)}</h3>
       <button class="close-btn" onclick="closeModal()">×</button>
     </div>
     <div style="display:flex;flex-direction:column;gap:10px;padding:8px 0 16px">
-      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadMusicaPDF('${id}','${titulo.replace(/'/g,"\\'")}','completo')">
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadMusicaPDF('${id}',${jsArg(titulo)},'completo')">
         <span style="font-size:18px">📚</span>
         <div style="text-align:left"><div style="font-weight:600">Cifra + Grade de Acordes</div><div style="font-size:12px;color:var(--text-dim)">Letra com acordes e mapa de compassos</div></div>
       </button>
-      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadMusicaPDF('${id}','${titulo.replace(/'/g,"\\'")}','cifra')">
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadMusicaPDF('${id}',${jsArg(titulo)},'cifra')">
         <span style="font-size:18px">🎵</span>
         <div style="text-align:left"><div style="font-weight:600">Só Cifra com Letra</div><div style="font-size:12px;color:var(--text-dim)">Acordes acima da letra, sem grade</div></div>
       </button>
-      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadMusicaPDF('${id}','${titulo.replace(/'/g,"\\'")}','tabela')">
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadMusicaPDF('${id}',${jsArg(titulo)},'tabela')">
         <span style="font-size:18px">🗂️</span>
         <div style="text-align:left"><div style="font-weight:600">Só Mapa de Acordes</div><div style="font-size:12px;color:var(--text-dim)">Grade de compassos por seção</div></div>
       </button>
@@ -2165,13 +2185,13 @@ async function openApresentacao(id) {
     const secaoNome = s.nome_secao || '';
     const rowsHtml = (s.grid || []).map(row => {
       const cellsHtml = row.map(cell => {
-        return `<div class="ap-grid-cell" data-original="${cell.replace(/"/g, '&quot;')}">${cell}</div>`;
+        return `<div class="ap-grid-cell" data-original="${escAttr(cell)}">${escHtml(cell)}</div>`;
       }).join('');
       return `<div class="ap-grid-row">${cellsHtml}</div>`;
     }).join('');
     return `
       <div class="ap-grid-secao">
-        <div class="ap-secao-l">${secaoNome}</div>
+        <div class="ap-secao-l">${escHtml(secaoNome)}</div>
         <div class="ap-grid-container">${rowsHtml}</div>
       </div>
     `;
@@ -2184,8 +2204,8 @@ async function openApresentacao(id) {
       <div class="ap-bar">
         <button class="ap-back" onclick="closeApresentacao()">✕</button>
         <div class="ap-titles">
-          <div class="ap-title">${m.titulo}</div>
-          <div class="ap-artist">${m.artista}</div>
+          <div class="ap-title">${escHtml(m.titulo)}</div>
+          <div class="ap-artist">${escHtml(m.artista)}</div>
         </div>
         <div class="ap-zoom-container" style="display:flex;align-items:center;gap:4px;margin-right:8px;">
           <button class="ap-btn" onclick="changeApZoom(-0.1)" title="Diminuir fonte ([)" style="width:28px;height:28px;font-size:11px;padding:0;">A-</button>
@@ -2194,7 +2214,7 @@ async function openApresentacao(id) {
         </div>
         <div class="ap-transpose-container" style="display:flex;align-items:center;gap:6px;margin-right:12px;">
           <button class="ap-btn" onclick="transposeStage(-1)" title="Transpor -1 semitom" style="width:32px;height:32px;font-size:12px;padding:0;">♭</button>
-          <div class="ap-tom-large" id="ap-tom-stage" data-original="${m.tom}">${m.tom}</div>
+          <div class="ap-tom-large" id="ap-tom-stage" data-original="${escAttr(m.tom)}">${escHtml(m.tom)}</div>
           <button class="ap-btn" onclick="transposeStage(1)" title="Transpor +1 semitom" style="width:32px;height:32px;font-size:12px;padding:0;">♯</button>
         </div>
         <div class="ap-controls">
@@ -2389,7 +2409,7 @@ function toggleSetlistDrawer() {
     const itemsHtml = _apRepList.map((m, i) => `
       <button class="ap-drawer-item ${i === _apRepIdx ? 'active' : ''}" onclick="apRepNavTo(${i})">
         <span class="num">${String(i + 1).padStart(2, '0')}</span>
-        <span class="nm">${m.titulo}</span>
+        <span class="nm">${escHtml(m.titulo)}</span>
         <span class="tm" style="color: ${i === _apRepIdx ? 'var(--accent)' : 'var(--text-dim)'}">${m.tom || ''}</span>
       </button>
     `).join('');
@@ -2631,7 +2651,7 @@ async function renderStats() {
           <div class="card-h"><div class="card-title">Artistas mais cadastrados</div></div>
           ${stats.top_artistas.map(a=>`
             <div class="bar-row">
-              <div class="bar-label">${a.artista}</div>
+              <div class="bar-label">${escHtml(a.artista)}</div>
               <div class="bar-track"><div class="bar-fill" style="width:${Math.round(a.n/maxArt*100)}%"></div></div>
               <div class="bar-val">${a.n}</div>
             </div>`).join('') || '<div style="color:var(--text-dim);font-size:13px">Nenhum dado ainda</div>'}
@@ -2641,7 +2661,7 @@ async function renderStats() {
           <div class="tons-grid">
             ${stats.por_tom.map(t=>`
               <div class="tom-cell" style="background:color-mix(in oklab, var(--accent) ${Math.round(t.n/maxTom*15)}%, transparent)">
-                <div class="t">${t.tom}</div>
+                <div class="t">${escHtml(t.tom)}</div>
                 <div class="n">${t.n}</div>
               </div>`).join('') || '<div style="color:var(--text-dim);font-size:13px">Nenhum dado ainda</div>'}
           </div>
@@ -2700,19 +2720,19 @@ async function renderRepertorios() {
             const durTotal = songs.reduce((acc,s)=>acc+(s.duracao_min||0),0);
             const min = Math.floor(durTotal);
             const durStr = durTotal > 0 ? (min >= 60 ? `${Math.floor(min/60)}h ${min%60}min` : `${min}min`) : '';
-            const nomeEsc = r.nome.replace(/'/g,"\\'");
+            const nomeEsc = jsArg(r.nome);
             return `
               <div class="rep-card" onclick="openEditRep('${r.id}')">
                 <div class="rep-card-bar"></div>
                 <div>
-                  <div class="rep-name">${r.nome}</div>
+                  <div class="rep-name">${escHtml(r.nome)}</div>
                   <div class="rep-desc">${songs.length} música${songs.length!==1?'s':''}${durStr?' · '+durStr:''}</div>
                 </div>
                 <div class="rep-songs-mini">
                   ${songs.slice(0,5).map((s,i)=>`
                     <div class="rep-song-mini">
                       <span class="num">${String(i+1).padStart(2,'0')}</span>
-                      <span class="nm">${s.titulo}</span>
+                      <span class="nm">${escHtml(s.titulo)}</span>
                       <span class="tm">${s.tom||''}</span>
                     </div>
                   `).join('')}
@@ -2725,8 +2745,8 @@ async function renderRepertorios() {
                     ${durStr ? `<span><b>${durStr}</b></span>` : ''}
                   </div>
                   <div style="display:flex;gap:6px" onclick="event.stopPropagation()">
-                    <button class="btn btn-quiet btn-sm" onclick="openQRCode('${r.id}','${nomeEsc}')">QR</button>
-                    <button class="btn btn-quiet btn-sm" onclick="gerarPDF('${r.id}','${nomeEsc}')">PDF</button>
+                    <button class="btn btn-quiet btn-sm" onclick="openQRCode('${r.id}',${nomeEsc})">QR</button>
+                    <button class="btn btn-quiet btn-sm" onclick="gerarPDF('${r.id}',${nomeEsc})">PDF</button>
                     <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openPalcoRep('${r.id}')">▶ Palco</button>
                   </div>
                 </div>
@@ -2782,14 +2802,14 @@ async function openEditRep(id) {
 
   modal(`
     <div class="modal-header">
-      <h3 class="modal-title">📋 ${editRep.nome}</h3>
+      <h3 class="modal-title">📋 ${escHtml(editRep.nome)}</h3>
       <button class="close-btn" onclick="closeModal()">×</button>
     </div>
 
     <div class="form-group" style="margin-bottom:28px">
       <label>Modificar Nome</label>
       <div style="display:flex;gap:12px">
-        <input id="rep-edit-nome" value="${editRep.nome}" style="flex:1" onkeydown="if(event.key==='Enter')saveRepNome('${id}')">
+        <input id="rep-edit-nome" value="${escAttr(editRep.nome)}" style="flex:1" onkeydown="if(event.key==='Enter')saveRepNome('${id}')">
         <button class="btn btn-ghost" onclick="saveRepNome('${id}')">Salvar</button>
       </div>
     </div>
@@ -2811,8 +2831,8 @@ async function openEditRep(id) {
                 <button class="btn btn-quiet btn-xs btn-icon-only" onclick="event.stopPropagation();moveSongInRep('${m.id}', 1)" title="Mover para baixo" style="padding:0;width:18px;height:14px;line-height:1;font-size:8px;display:flex;align-items:center;justify-content:center;">▼</button>
               </div>
               <div class="di-info">
-                <div class="di-title">${m.titulo}</div>
-                <div class="di-artist">${m.artista} · <span>${m.tom}</span></div>
+                <div class="di-title">${escHtml(m.titulo)}</div>
+                <div class="di-artist">${escHtml(m.artista)} · <span>${escHtml(m.tom)}</span></div>
               </div>
               <button class="btn btn-quiet btn-xs btn-icon-only" onclick="removerDaLista('${m.id}')" title="Remover da lista">✕</button>
             </div>
@@ -2831,9 +2851,9 @@ async function openEditRep(id) {
     </div>
 
     <div class="modal-footer">
-      <button class="btn btn-danger btn-sm" onclick="delRep('${id}','${editRep.nome.replace(/'/g,"\\'")}',true)">🗑️ Excluir Geral</button>
+      <button class="btn btn-danger btn-sm" onclick="delRep('${id}',${jsArg(editRep.nome)},true)">🗑️ Excluir Geral</button>
       <button class="btn btn-ghost" onclick="closeModal()">Sair</button>
-      <button class="btn btn-green" onclick="closeModal();gerarPDF('${id}','${editRep.nome.replace(/'/g,"\\'")}')">📄 Baixar Livro em PDF</button>
+      <button class="btn btn-green" onclick="closeModal();gerarPDF('${id}',${jsArg(editRep.nome)})">📄 Baixar Livro em PDF</button>
     </div>`, 'modal-lg');
 }
 
@@ -2842,8 +2862,8 @@ function renderDisponiveis(lista) {
   return lista.map(m=>`
     <div class="avail-item" onclick="adicionarNaLista('${m.id}')">
       <div class="di-info" style="flex:1">
-        <div class="di-title">${m.titulo}</div>
-        <div class="di-artist">${m.artista} · <span>${m.tom}</span></div>
+        <div class="di-title">${escHtml(m.titulo)}</div>
+        <div class="di-artist">${escHtml(m.artista)} · <span>${escHtml(m.tom)}</span></div>
       </div>
       <button class="btn btn-primary btn-xs btn-icon-only">+</button>
     </div>`).join('');
@@ -2867,8 +2887,20 @@ async function filtrarDisp(q) {
   if (countEl) countEl.textContent = `Adicionar Novas (${disp.length})`;
 }
 
+// A lista vem da memória, nunca da tela: uma janela fechando perde os ids e gravaria o repertório vazio
 function getSelectedIds() {
-  return [...document.querySelectorAll('#drag-selected .drag-item')].map(el=>el.dataset.id);
+  return (editRep?.musicas || []).map(m => m.id);
+}
+
+async function salvarMusicasRep(ids) {
+  const rep = editRep;
+  if (!rep) return;
+  const r = await api.put(`/api/repertorios/${rep.id}`, {musicas: ids});
+  if (r && r.erro) { toast('❌ ' + r.erro, 'err'); return; }
+  const reps = await api.get('/api/repertorios');
+  const novo = reps.find(x => x.id === rep.id);
+  if (novo && editRep && editRep.id === rep.id) editRep = novo;
+  await refreshEditRepLists();
 }
 
 async function refreshEditRepLists() {
@@ -2888,8 +2920,8 @@ async function refreshEditRepLists() {
           <button class="btn btn-quiet btn-xs btn-icon-only" onclick="event.stopPropagation();moveSongInRep('${m.id}', 1)" title="Mover para baixo" style="padding:0;width:18px;height:14px;line-height:1;font-size:8px;display:flex;align-items:center;justify-content:center;">▼</button>
         </div>
         <div class="di-info">
-          <div class="di-title">${m.titulo}</div>
-          <div class="di-artist">${m.artista} · <span>${m.tom}</span></div>
+          <div class="di-title">${escHtml(m.titulo)}</div>
+          <div class="di-artist">${escHtml(m.artista)} · <span>${escHtml(m.tom)}</span></div>
         </div>
         <button class="btn btn-quiet btn-xs btn-icon-only" onclick="removerDaLista('${m.id}')" title="Remover da lista">✕</button>
       </div>
@@ -2904,38 +2936,23 @@ async function refreshEditRepLists() {
 
 async function adicionarNaLista(musicaId) {
   const selIds = getSelectedIds();
-  if(selIds.includes(musicaId)) return;
-  const novas = [...selIds, musicaId];
-  await api.put(`/api/repertorios/${editRep.id}`, {musicas: novas});
-  const reps = await api.get('/api/repertorios');
-  editRep = reps.find(r=>r.id===editRep.id);
-  await refreshEditRepLists();
+  if (!editRep || selIds.includes(musicaId)) return;
+  await salvarMusicasRep([...selIds, musicaId]);
 }
 
 async function removerDaLista(musicaId) {
-  const novas = getSelectedIds().filter(id=>id!==musicaId);
-  await api.put(`/api/repertorios/${editRep.id}`, {musicas: novas});
-  const reps = await api.get('/api/repertorios');
-  editRep = reps.find(r=>r.id===editRep.id);
-  await refreshEditRepLists();
+  const selIds = getSelectedIds();
+  if (!selIds.includes(musicaId)) return;
+  await salvarMusicasRep(selIds.filter(id => id !== musicaId));
 }
 
 async function moveSongInRep(musicaId, direction) {
   const selIds = getSelectedIds();
   const idx = selIds.indexOf(musicaId);
-  if (idx === -1) return;
   const targetIdx = idx + direction;
-  if (targetIdx < 0 || targetIdx >= selIds.length) return;
-  
-  // Troca de posição no array
-  const temp = selIds[idx];
-  selIds[idx] = selIds[targetIdx];
-  selIds[targetIdx] = temp;
-  
-  await api.put(`/api/repertorios/${editRep.id}`, {musicas: selIds});
-  const reps = await api.get('/api/repertorios');
-  editRep = reps.find(r=>r.id===editRep.id);
-  await refreshEditRepLists();
+  if (idx === -1 || targetIdx < 0 || targetIdx >= selIds.length) return;
+  [selIds[idx], selIds[targetIdx]] = [selIds[targetIdx], selIds[idx]];
+  await salvarMusicasRep(selIds);
 }
 
 async function saveRepNome(id) {
@@ -2950,26 +2967,19 @@ async function saveRepNome(id) {
 
 function onDrop(event, zone) {
   event.preventDefault();
-  if(!dragSrc) return;
+  const src = dragSrc;
+  dragSrc = null;
   const target = event.target.closest('.drag-item');
-  const list = document.getElementById('drag-selected');
-  if(target && target!==dragSrc) {
-    const items = [...list.querySelectorAll('.drag-item')];
-    const srcIdx  = items.indexOf(dragSrc);
-    const tgtIdx  = items.indexOf(target);
-    if(srcIdx<tgtIdx) list.insertBefore(dragSrc, target.nextSibling);
-    else              list.insertBefore(dragSrc, target);
-    saveOrder();
-  }
-}
-
-async function saveOrder() {
-  const novas = getSelectedIds();
-  await api.put(`/api/repertorios/${editRep.id}`, {musicas: novas});
+  if (!src || !target || target === src) return;
+  const ids = getSelectedIds();
+  const de = ids.indexOf(src.dataset.id), para = ids.indexOf(target.dataset.id);
+  if (de === -1 || para === -1) return;
+  ids.splice(para, 0, ids.splice(de, 1)[0]);
+  salvarMusicasRep(ids);
 }
 
 async function delRep(id, nome, fromModal=false) {
-  confirm_del(`Excluir repertório "<strong>${nome}</strong>"?`, async()=>{
+  confirm_del(`Excluir repertório "<strong>${escHtml(nome)}</strong>"?`, async()=>{
     await api.del(`/api/repertorios/${id}`);
     if(fromModal) closeModal();
     toast('🗑️ Repertório apagado');
@@ -2983,32 +2993,32 @@ async function delRep(id, nome, fromModal=false) {
 function gerarPDF(id, nome) {
   modal(`
     <div class="modal-header">
-      <h3 class="modal-title">📄 Gerar PDF — ${nome}</h3>
+      <h3 class="modal-title">📄 Gerar PDF — ${escHtml(nome)}</h3>
       <button class="close-btn" onclick="closeModal()">×</button>
     </div>
     <div style="display:flex;flex-direction:column;gap:10px;padding:8px 0 16px">
-      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadPDF('${id}','${nome.replace(/'/g,"\\'")}','completo')">
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadPDF('${id}',${jsArg(nome)},'completo')">
         <span style="font-size:18px">📚</span>
         <div style="text-align:left">
           <div style="font-weight:600;margin-bottom:2px">PDF Completo</div>
           <div style="font-size:12px;color:var(--text-dim)">Cifra com letra + mapa de acordes para cada música</div>
         </div>
       </button>
-      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadPDF('${id}','${nome.replace(/'/g,"\\'")}','cifra')">
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadPDF('${id}',${jsArg(nome)},'cifra')">
         <span style="font-size:18px">🎵</span>
         <div style="text-align:left">
           <div style="font-weight:600;margin-bottom:2px">Só Cifras e Letras</div>
           <div style="font-size:12px;color:var(--text-dim)">Acordes acima da letra, sem mapa de grade</div>
         </div>
       </button>
-      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadPDF('${id}','${nome.replace(/'/g,"\\'")}','tabela')">
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadPDF('${id}',${jsArg(nome)},'tabela')">
         <span style="font-size:18px">🗂️</span>
         <div style="text-align:left">
           <div style="font-weight:600;margin-bottom:2px">Só Mapa de Acordes</div>
           <div style="font-size:12px;color:var(--text-dim)">Grade de compassos por seção, sem letra</div>
         </div>
       </button>
-      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadPDF('${id}','${nome.replace(/'/g,"\\'")}','setlist')">
+      <button class="btn btn-ghost pdf-opt-btn" onclick="closeModal();_downloadPDF('${id}',${jsArg(nome)},'setlist')">
         <span style="font-size:18px">🎤</span>
         <div style="text-align:left">
           <div style="font-weight:600;margin-bottom:2px">Lista de Palco</div>
@@ -3045,7 +3055,7 @@ async function _downloadPDF(id, nome, modo) {
 function openQRCode(rid, nome) {
   modal(`
     <div class="modal-header">
-      <h3 class="modal-title">QR Code — ${nome}</h3>
+      <h3 class="modal-title">QR Code — ${escHtml(nome)}</h3>
       <button class="close-btn" onclick="closeModal()">×</button>
     </div>
     <div style="text-align:center;padding:20px">
