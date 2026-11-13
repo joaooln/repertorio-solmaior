@@ -17,5 +17,8 @@
       "path": "/health",
       "schedule": "0 12 * * *"
     }
+  ],
+  "regions": [
+    "pdx1"
   ]
 }
