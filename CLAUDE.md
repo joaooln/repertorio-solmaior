@@ -27,6 +27,7 @@ Guia para Claude Code trabalhar neste repositório. O README é a documentação
 
 - **PostgreSQL é obrigatório** mesmo em dev — não há fallback para SQLite. Sem `DATABASE_URL` o app quebra no boot (mas o `try/except` em `init_db()` no fim do arquivo só loga aviso).
 - **Python 3.12 em produção** (`.python-version`): o `google-genai` atual exige 3.11+.
+- **Banco só por IPv4 via pooler:** o host direto do Supabase (`db.<ref>.supabase.co`) só tem IPv6 e o Vercel não o alcança — o app ficou fora do ar por isso em nov/2026. `conectar_db()` cai sozinho para o pooler (`aws-N-<região>.pooler.supabase.com:6543`, região em `SUPABASE_REGION`, padrão `us-west-2`). O ideal é o `DATABASE_URL` do Vercel já ser o do pooler. A função roda em `pdx1` (`vercel.json`), mesma região do banco.
 - **`sslmode='require'`** está hardcoded em `get_db()`. Se for usar Postgres local sem SSL, vai precisar ajustar.
 - **Modelos Gemini:** `GEMINI_PREFERRED` é uma lista ordenada por preferência (free tier primeiro). `call_gemini()` usa o pacote `google-genai` e faz fallback automático em 429/503/404 ou resposta vazia. Ao adicionar modelos novos, coloque na ordem certa.
 - **Toda gravação de música passa por `limpar_cifra`/`limpar_tabela`/`limpar_texto`** (NFC, sem caracteres invisíveis, acordes que vieram como letra voltam para `acordes`). Rota nova que grava cifra deve usar essas funções; `/api/biblioteca/limpar` reaplica em todo o banco.
