@@ -115,7 +115,7 @@ Botão **▶ Palco** em cada repertório abre o Modo Apresentação na primeira 
 
 - **Próxima música** aparece no fim de cada cifra; um toque abre
 - **Celular:** deslize para a esquerda/direita para trocar de música
-- **Pedal Bluetooth:** PageDown rola a cifra e, no fim dela, passa para a próxima música; ←/→ trocam de música
+- **Pedal Bluetooth (passador de páginas, ex.: M-Vave Turner):** ligue o **modo pedal** (🦶 ou tecla D). O pedal direito rola uma tela e, no fim da cifra, abre a próxima música; o esquerdo volta. Funciona em qualquer modo de teclas do pedal (↑/↓, ←/→ ou PageUp/PageDown). Sem o modo pedal, PageDown rola e ←/→ trocam de música
 
 ### Backup
 

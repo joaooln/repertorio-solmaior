@@ -2224,6 +2224,7 @@ async function openApresentacao(id) {
             <span id="ap-speed-val">${scrollSpeed.toFixed(1)}×</span>
           </div>
           <button class="ap-btn ${_apSoloAcordes ? 'on' : ''}" id="ap-view-mode-btn" onclick="toggleApViewMode()" title="Alternar Letra/Grade de Acordes">▤</button>
+          <button class="ap-btn ${_apPedal ? 'on' : ''}" id="ap-pedal-btn" onclick="togglePedal()" title="Modo pedal: qualquer tecla do pedal avança ou volta (D)">🦶</button>
           <button class="ap-btn" id="ap-metro-btn" onclick="toggleMetronomo()" title="Metrônomo">🥁</button>
           <button class="ap-btn" id="ap-scroll-btn" onclick="toggleAutoScroll()" title="Auto-scroll (espaço)">▶</button>
         </div>
@@ -2526,8 +2527,46 @@ function _startMetronomo() {
   }, ms);
 }
 
+// ── Pedal Bluetooth (passador de páginas) ──────────────────────────────
+// Esses pedais são teclados de duas teclas; o par enviado depende do modo escolhido no pedal
+const PEDAL_AVANCA = ['PageDown', 'ArrowDown', 'ArrowRight', 'Enter'];
+const PEDAL_VOLTA  = ['PageUp', 'ArrowUp', 'ArrowLeft'];
+let _apPedal = localStorage.getItem('apPedal') === 'true';
+let _apPedalTroca = 0;
+
+function togglePedal() {
+  _apPedal = !_apPedal;
+  localStorage.setItem('apPedal', _apPedal);
+  document.getElementById('ap-pedal-btn')?.classList.toggle('on', _apPedal);
+  toast(_apPedal ? '🦶 Modo pedal ligado: direito avança, esquerdo volta' : 'Modo pedal desligado');
+}
+
+function pedalPasso(dir) {
+  const b = document.getElementById('ap-body');
+  // Logo depois de trocar de música o pedal é ignorado: pisada dupla não pula nem rola a música nova
+  if (!b || Date.now() - _apPedalTroca < 700) return;
+  const noLimite = dir > 0 ? noFimDoPalco() : b.scrollTop <= 4;
+  if (!noLimite) {
+    b.scrollBy({ top: dir * Math.max(120, b.clientHeight * 0.8), behavior: 'smooth' });
+    return;
+  }
+  const alvo = _apRepIdx + dir;
+  if (!_apRepList.length || alvo < 0 || alvo >= _apRepList.length) {
+    if (dir > 0) toast(_apRepList.length ? 'Fim do repertório' : 'Fim da música');
+    return;
+  }
+  _apPedalTroca = Date.now();
+  apRepNav(dir);
+}
+
 function apKeyHandler(e) {
   if (e.key === 'Escape') { closeApresentacao(); return; }
+  if (_apPedal && (PEDAL_AVANCA.includes(e.key) || PEDAL_VOLTA.includes(e.key)) && e.target?.tagName !== 'INPUT') {
+    e.preventDefault();
+    if (!e.repeat) pedalPasso(PEDAL_AVANCA.includes(e.key) ? 1 : -1);
+    return;
+  }
+  if (e.key === 'd' || e.key === 'D') { e.preventDefault(); togglePedal(); return; }
   if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); toggleAutoScroll(); return; }
   if (e.key === 'PageDown' || e.key === 'ArrowDown') {
     e.preventDefault();
