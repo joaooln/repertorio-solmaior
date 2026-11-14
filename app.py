@@ -33,9 +33,31 @@ def admin_required(f):
 _db_local = threading.local()
 DB_OCIOSA_S = 20  # depois disso a conexão é testada antes de ser reaproveitada
 
+def urls_pooler(url):
+    """O host direto do Supabase (db.<ref>.supabase.co) só tem IPv6, que o Vercel não alcança.
+    Devolve as URLs equivalentes pelo pooler (IPv4) do mesmo projeto."""
+    m = re.match(r'^(\w+://)([^:@/]+)(:[^@]*)?@db\.([a-z0-9]+)\.supabase\.co(?::\d+)?(/.*)?$', url or '')
+    if not m: return []
+    esquema, usuario, senha, ref, resto = m.groups()
+    regiao = os.environ.get('SUPABASE_REGION', 'us-west-2')
+    return [f"{esquema}{usuario}.{ref}{senha or ''}@{p}-{regiao}.pooler.supabase.com:6543{resto or '/postgres'}"
+            for p in ('aws-0', 'aws-1')]
+
+_db_url_ok = None
+
 def conectar_db():
     # Supabase/PostgreSQL na nuvem geralmente exige SSL
-    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor, sslmode='require')
+    global _db_url_ok
+    erro = None
+    for url in ([_db_url_ok] if _db_url_ok else [DATABASE_URL] + urls_pooler(DATABASE_URL)):
+        try:
+            conn = psycopg2.connect(url, cursor_factory=RealDictCursor, sslmode='require', connect_timeout=8)
+            _db_url_ok = url
+            return conn
+        except psycopg2.OperationalError as e:
+            erro = erro or e
+    _db_url_ok = None
+    raise erro
 
 def descartar_db():
     conn, _db_local.conn = getattr(_db_local, 'conn', None), None

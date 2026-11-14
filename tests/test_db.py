@@ -86,3 +86,36 @@ def test_conexao_fechada_e_reaberta(conexoes):
     with GET_DB() as conn:
         pass
     assert conn is conexoes[1]
+
+
+def test_urls_do_pooler_para_host_direto_do_supabase(monkeypatch):
+    monkeypatch.delenv('SUPABASE_REGION', raising=False)
+    urls = A.urls_pooler('postgresql://postgres:s3nh%40@db.abcdefgh.supabase.co:5432/postgres')
+    assert urls == [
+        'postgresql://postgres.abcdefgh:s3nh%40@aws-0-us-west-2.pooler.supabase.com:6543/postgres',
+        'postgresql://postgres.abcdefgh:s3nh%40@aws-1-us-west-2.pooler.supabase.com:6543/postgres',
+    ]
+    assert A.urls_pooler('postgresql://u:p@aws-0-us-west-2.pooler.supabase.com:6543/postgres') == []
+    assert A.urls_pooler('postgresql://u:p@localhost/x') == [] and A.urls_pooler(None) == []
+
+
+def test_cai_para_o_pooler_quando_o_host_direto_falha(monkeypatch):
+    tentativas = []
+
+    def connect(url, **k):
+        tentativas.append(url)
+        if 'aws-1' not in url: raise psycopg2.OperationalError('sem rota: ' + url.split('@')[1])
+        return Conexao()
+
+    monkeypatch.setattr(A, 'DATABASE_URL', 'postgresql://postgres:x@db.abcdefgh.supabase.co:5432/postgres')
+    monkeypatch.setattr(A, '_db_url_ok', None)
+    monkeypatch.setattr(A.psycopg2, 'connect', connect)
+    A.conectar_db()
+    assert [u.split('@')[1].split('.')[0] for u in tentativas] == ['db', 'aws-0-us-west-2', 'aws-1-us-west-2']
+    A.conectar_db()
+    assert len(tentativas) == 4 and 'aws-1' in tentativas[-1]
+
+    monkeypatch.setattr(A, '_db_url_ok', None)
+    monkeypatch.setattr(A.psycopg2, 'connect', lambda url, **k: (_ for _ in ()).throw(psycopg2.OperationalError('caiu ' + url.split('@')[1])))
+    with pytest.raises(psycopg2.OperationalError, match='db.abcdefgh'):
+        A.conectar_db()
