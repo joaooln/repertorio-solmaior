@@ -2201,6 +2201,9 @@ async function openApresentacao(id) {
 
   document.body.insertAdjacentHTML('beforeend', `
     <div class="ap-overlay" id="ap-root" style="--ap-zoom: ${_apZoom};">
+      <input type="text" id="ap-pedal-sink" inputmode="none" autocomplete="off" autocapitalize="off" spellcheck="false"
+             style="position:fixed;top:0;left:0;width:1px;height:1px;opacity:0.01;caret-color:transparent;outline:none;border:none;padding:0;margin:0;z-index:-1;"
+             tabindex="-1" aria-hidden="true">
       <div class="ap-bar">
         <button class="ap-back" onclick="closeApresentacao()">✕</button>
         <div class="ap-titles">
@@ -2253,6 +2256,27 @@ async function openApresentacao(id) {
   requestWakeLock();
   document.addEventListener('visibilitychange', handleVisibilityChange);
   ligarSwipePalco(document.getElementById('ap-body'));
+
+  const apRootEl = document.getElementById('ap-root');
+  if (apRootEl) {
+    const manterFoco = (e) => {
+      if (!e.target || (e.target.id !== 'ap-speed' && e.target.tagName !== 'SELECT' && e.target.tagName !== 'TEXTAREA')) {
+        garantirFocoPedal();
+      }
+    };
+    apRootEl.addEventListener('touchstart', manterFoco, { passive: true });
+    apRootEl.addEventListener('click', manterFoco);
+  }
+  const sinkEl = document.getElementById('ap-pedal-sink');
+  if (sinkEl) {
+    sinkEl.addEventListener('input', () => { sinkEl.value = ''; });
+    sinkEl.addEventListener('blur', () => {
+      if (document.getElementById('ap-root') && document.activeElement?.id !== 'ap-speed') {
+        setTimeout(garantirFocoPedal, 50);
+      }
+    });
+  }
+  garantirFocoPedal();
 }
 
 // Preferências por música (fonte e velocidade) guardadas no aparelho
@@ -2275,8 +2299,16 @@ function ligarSwipePalco(el) {
     x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
   }, { passive: true });
   el.addEventListener('touchend', e => {
-    if (x0 === null || !_apRepList.length) return;
+    if (x0 === null) return;
     const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
+    if (document.getElementById('pedal-teste')) {
+      const tipo = Math.abs(dx) < 10 && Math.abs(dy) < 10 ? 'toque na tela'
+        : Math.abs(dx) > Math.abs(dy) ? `deslize para a ${dx < 0 ? 'esquerda' : 'direita'}` : `deslize para ${dy < 0 ? 'cima' : 'baixo'}`;
+      registrarTestePedal(`• ${tipo} — o pedal (ou o dedo) está simulando toque, não tecla`, false);
+      x0 = null;
+      return;
+    }
+    if (!_apRepList.length) { x0 = null; return; }
     x0 = null;
     if (Math.abs(dx) > 90 && Math.abs(dx) > Math.abs(dy) * 2) apRepNav(dx < 0 ? 1 : -1);
   }, { passive: true });
@@ -2529,16 +2561,69 @@ function _startMetronomo() {
 
 // ── Pedal Bluetooth (passador de páginas) ──────────────────────────────
 // Esses pedais são teclados de duas teclas; o par enviado depende do modo escolhido no pedal
-const PEDAL_AVANCA = ['PageDown', 'ArrowDown', 'ArrowRight', 'Enter'];
+const PEDAL_AVANCA = ['PageDown', 'ArrowDown', 'ArrowRight', 'Enter', ' '];
 const PEDAL_VOLTA  = ['PageUp', 'ArrowUp', 'ArrowLeft'];
+const TECLA_POR_CODIGO = { 13: 'Enter', 32: ' ', 33: 'PageUp', 34: 'PageDown', 37: 'ArrowLeft', 38: 'ArrowUp', 39: 'ArrowRight', 40: 'ArrowDown' };
+
+// iPhone/iPad antigos informam "UIKeyInputDownArrow" em vez de "ArrowDown"; outros só trazem code ou keyCode
+function teclaPedal(e) {
+  let k = e.key || '';
+  const ios = k.match(/^UIKeyInput(Up|Down|Left|Right)Arrow$/) || k.match(/^UIKeyInput(PageUp|PageDown)$/);
+  if (ios) k = ios[1].startsWith('Page') ? ios[1] : 'Arrow' + ios[1];
+  if (k === 'Spacebar') k = ' ';
+  if (k && k !== 'Unidentified') return k;
+  if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(e.code)) return e.code;
+  if (e.code === 'Space') return ' ';
+  return TECLA_POR_CODIGO[e.keyCode] || k;
+}
 let _apPedal = localStorage.getItem('apPedal') === 'true';
 let _apPedalTroca = 0;
+
+function garantirFocoPedal() {
+  const sink = document.getElementById('ap-pedal-sink');
+  if (sink && document.activeElement !== sink) {
+    try { sink.focus({ preventScroll: true }); } catch (err) {}
+  }
+}
 
 function togglePedal() {
   _apPedal = !_apPedal;
   localStorage.setItem('apPedal', _apPedal);
   document.getElementById('ap-pedal-btn')?.classList.toggle('on', _apPedal);
-  toast(_apPedal ? '🦶 Modo pedal ligado: direito avança, esquerdo volta' : 'Modo pedal desligado');
+  garantirFocoPedal();
+  if (_apPedal) abrirTestePedal();
+  else { fecharTestePedal(); toast('Modo pedal desligado'); }
+}
+
+// Mostra na tela o que cada pisada envia, para conferir o modo do pedal
+function abrirTestePedal() {
+  fecharTestePedal();
+  garantirFocoPedal();
+  document.getElementById('ap-root')?.insertAdjacentHTML('beforeend', `
+    <div class="pedal-teste" id="pedal-teste">
+      <div class="pedal-teste-t">🦶 Teste do pedal</div>
+      <div class="pedal-teste-s">Pise em cada lado do pedal. Aqui aparece o que o app recebeu.</div>
+      <div class="pedal-teste-log" id="pedal-teste-log"><div class="pedal-nada">Nada recebido ainda…</div></div>
+      <div class="pedal-teste-s">Se nada aparecer: no iPhone dê um toque na tela para ativar o foco, confira o seletor de modo do pedal e certifique-se de que "Acesso Total ao Teclado" está desligado no iOS.</div>
+      <button class="btn btn-primary btn-sm" onclick="fecharTestePedal()">Pronto, usar o pedal</button>
+    </div>`);
+}
+
+function fecharTestePedal() {
+  document.getElementById('pedal-teste')?.remove();
+  garantirFocoPedal();
+}
+
+function registrarTestePedal(texto, ok) {
+  const log = document.getElementById('pedal-teste-log');
+  if (!log) return false;
+  log.querySelector('.pedal-nada')?.remove();
+  const linha = document.createElement('div');
+  linha.className = ok ? 'pedal-ok' : 'pedal-ruim';
+  linha.textContent = texto;
+  log.prepend(linha);
+  while (log.children.length > 5) log.lastChild.remove();
+  return true;
 }
 
 function pedalPasso(dir) {
@@ -2561,9 +2646,21 @@ function pedalPasso(dir) {
 
 function apKeyHandler(e) {
   if (e.key === 'Escape') { closeApresentacao(); return; }
-  if (_apPedal && (PEDAL_AVANCA.includes(e.key) || PEDAL_VOLTA.includes(e.key)) && e.target?.tagName !== 'INPUT') {
+  const ehSink = e.target?.id === 'ap-pedal-sink';
+  if (ehSink && e.target) e.target.value = '';
+  if (document.getElementById('pedal-teste')) {
     e.preventDefault();
-    if (!e.repeat) pedalPasso(PEDAL_AVANCA.includes(e.key) ? 1 : -1);
+    const k = teclaPedal(e);
+    const nome = k === ' ' ? 'Espaço' : k || '(sem nome)';
+    if (PEDAL_AVANCA.includes(k)) registrarTestePedal(`✓ ${nome} — vai avançar`, true);
+    else if (PEDAL_VOLTA.includes(k)) registrarTestePedal(`✓ ${nome} — vai voltar`, true);
+    else registrarTestePedal(`✗ ${nome} (código ${e.keyCode || '?'}) — tecla que o app não usa para o pedal`, false);
+    return;
+  }
+  const tecla = teclaPedal(e);
+  if (_apPedal && (PEDAL_AVANCA.includes(tecla) || PEDAL_VOLTA.includes(tecla)) && (ehSink || (e.target?.tagName !== 'INPUT' && e.target?.tagName !== 'TEXTAREA'))) {
+    e.preventDefault();
+    if (!e.repeat) pedalPasso(PEDAL_AVANCA.includes(tecla) ? 1 : -1);
     return;
   }
   if (e.key === 'd' || e.key === 'D') { e.preventDefault(); togglePedal(); return; }

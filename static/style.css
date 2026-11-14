@@ -1408,3 +1408,17 @@ select {
   padding: 8px 14px; border-radius: 8px; background: var(--accent); color: #1a1408;
   font-family: var(--font-m); font-weight: 700; font-size: 14px; box-shadow: 0 6px 20px rgba(0,0,0,0.4);
 }
+
+/* ── Teste do pedal ──────────────────────────────────────────────────── */
+.pedal-teste {
+  position: absolute; z-index: 5; left: 50%; bottom: 24px; transform: translateX(-50%);
+  width: min(440px, calc(100% - 32px)); display: flex; flex-direction: column; gap: 10px;
+  padding: 16px; border-radius: 14px; border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
+  background: var(--bg-2, #15120c); box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+}
+.pedal-teste-t { font-weight: 700; font-size: 16px; }
+.pedal-teste-s { font-size: 13px; color: var(--text-dim); }
+.pedal-teste-log { display: flex; flex-direction: column; gap: 4px; min-height: 60px; font-family: var(--font-m); font-size: 13px; }
+.pedal-ok { color: var(--accent); }
+.pedal-ruim { color: var(--text); }
+.pedal-nada { color: var(--text-dim); }
