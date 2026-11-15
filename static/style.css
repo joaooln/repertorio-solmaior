@@ -527,7 +527,7 @@ button { font-family: inherit; cursor: pointer; }
 .ap-overlay {
   position: fixed; inset: 0;
   background: #06070a;
-  z-index: 200;
+  z-index: 1500; /* acima da barra de navegação do celular (999) e dos modais (1000) */
   display: flex; flex-direction: column;
 }
 .ap-overlay::before {
